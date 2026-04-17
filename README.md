@@ -4,6 +4,8 @@ Autostop VPN is the isolated local working copy for the VPN monitoring subsystem
 
 The production copy of the same files is mirrored into the main `AutostopCRM` repository. This repo is the place to make VPN-only changes without mixing them with CRM work.
 
+For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md).
+
 ## What This Project Does
 
 - collects WireGuard peer traffic from the live Amnezia container
