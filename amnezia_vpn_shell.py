@@ -433,7 +433,7 @@ class ShellApp:
         self.channel_state_label.grid(row=2, column=0, sticky="w", pady=(2, 0))
         self.channel_bar = tk.Canvas(
             frame,
-            height=34,
+            height=24,
             background="#f6f6f2",
             highlightthickness=0,
             borderwidth=0,
@@ -643,7 +643,7 @@ class ShellApp:
         }
         track_color, fill_color, marker_color = colors.get(state_class, colors["muted"])
 
-        margin_y = 7
+        margin_y = 4
         track_top = margin_y
         track_bottom = height - margin_y
         canvas.create_rectangle(0, track_top, width, track_bottom, fill=track_color, outline="#8b8b8b")
@@ -658,27 +658,6 @@ class ShellApp:
         if model and current_total_bps > 0 and width > 0:
             marker_x = min(max(int(round(width * utilization / 100.0)), 1), width - 1)
             canvas.create_line(marker_x, track_top - 2, marker_x, track_bottom + 2, fill=marker_color, width=2)
-
-        label = "Канал недоступен"
-        if model:
-            label = f"{model['bandwidth_utilization']} | {model['current_total']} / {model['bandwidth_limit']}"
-        canvas.create_text(
-            8,
-            2,
-            anchor="nw",
-            text=label,
-            fill="#111111",
-            font=("Consolas", 9, "bold"),
-        )
-        if model and current_total_bps > 0:
-            canvas.create_text(
-                marker_x + 6 if marker_x < width - 80 else max(marker_x - 80, 4),
-                height - 2,
-                anchor="sw",
-                text=f"{utilization:.2f}%",
-                fill=marker_color,
-                font=("Consolas", 8, "bold"),
-            )
 
     def close(self) -> None:
         if self._closed:
