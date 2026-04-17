@@ -723,7 +723,6 @@ def render_dashboard(summary: Dict[str, object]) -> str:
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="60">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Панель Amnezia VPN</title>
   <style>
@@ -882,7 +881,7 @@ def render_dashboard(summary: Dict[str, object]) -> str:
 </head>
 <body>
   <h1>Панель Amnezia VPN</h1>
-  <p class="muted">Обновлено: {updated_at} | Часовой пояс: {timezone} | Окно текущей скорости: {sample_window} сек.</p>
+  <p class="muted">Обновлено: {updated_at} | Часовой пояс: {timezone} | Окно текущей скорости: {sample_window} сек. Обновите страницу F5, чтобы подтянуть свежие данные.</p>
   <p><span class="status {status_class}">{status_label}</span></p>
 
   <div class="traffic-banner">
@@ -935,13 +934,6 @@ def render_dashboard(summary: Dict[str, object]) -> str:
       Потери: {packet_loss}<br>
       Контейнер: {container_status}
       <div class="hint">Потери и задержка считаются обычным ping от сервера.</div>
-    </div>
-    <div class="panel">
-      <strong>Пояснения</strong><br>
-      Текущая скорость: среднее за последнее окно сбора.<br>
-      Средняя за день: трафик с 00:00 / прошедшее время.<br>
-      Сегодня: суммарный трафик за текущий день.<br>
-      Всего: накопленный трафик с начала учёта.
     </div>
     <div class="panel">
       <strong>Периоды</strong><br>
@@ -1672,6 +1664,7 @@ def doctor() -> int:
             "amnezia_server_info.json is missing",
         ),
         ("dashboard launcher", (script_root / "open_amnezia_dashboard.ps1").exists(), "open_amnezia_dashboard.ps1 is missing"),
+        ("dashboard server", (script_root / "amnezia_dashboard_server.py").exists(), "amnezia_dashboard_server.py is missing"),
         ("collector service", (script_root / "amnezia-traffic-collector.service").exists(), "amnezia-traffic-collector.service is missing"),
         ("dashboard service", (script_root / "amnezia-dashboard.service").exists(), "amnezia-dashboard.service is missing"),
         ("timer unit", (script_root / "amnezia-traffic-collector.timer").exists(), "amnezia-traffic-collector.timer is missing"),

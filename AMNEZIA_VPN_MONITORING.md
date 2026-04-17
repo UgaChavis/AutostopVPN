@@ -29,6 +29,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `amnezia-traffic-collector.timer`
 - `amnezia-dashboard.service`
 - `amnezia_server_info.json`
+- `amnezia_dashboard_server.py`
 - `open_amnezia_dashboard.ps1`
 - `open_amnezia_dashboard.cmd`
 - `tests/test_amnezia_traffic_collector.py`
@@ -44,6 +45,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `reports/current_users.md`: text report
 - `web/dashboard.json`: dashboard JSON
 - `web/index.html`: lightweight local dashboard
+- `/`: dashboard server response rendered from the latest `summary.json` on each request
 
 ## Metrics
 
@@ -52,6 +54,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - current channel load versus configured or auto-detected bandwidth limit
 - current load, daily average, and daily peak bandwidth for the server channel
 - a top banner that shows whether the channel is normal, near limit, or overloaded
+- page reload reads the latest snapshot directly from the dashboard server, without background auto-refresh
 - per-peer share of the live flow for quick hotspot detection
 - explicit traffic periods for current day and full accounting interval
 - current speeds based on the latest sample window

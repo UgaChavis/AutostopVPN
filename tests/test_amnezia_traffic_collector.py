@@ -308,6 +308,8 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertEqual(summary["warnings"], [])
         self.assertEqual(web_summary["vpn"]["listen_port"], 47895)
         self.assertIn("Панель Amnezia VPN", html)
+        self.assertNotIn('http-equiv="refresh"', html)
+        self.assertIn("Обновите страницу F5", html)
         self.assertIn("traffic-banner", html)
         self.assertIn("Загрузка канала", html)
         self.assertIn("current_share_percent", report)
@@ -418,6 +420,7 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertIn("[OK] ping", output)
         self.assertIn("[OK] ip", output)
         self.assertIn("[OK] dashboard launcher", output)
+        self.assertIn("[OK] dashboard server", output)
         self.assertIn("[WARN] summary cache", output)
 
 

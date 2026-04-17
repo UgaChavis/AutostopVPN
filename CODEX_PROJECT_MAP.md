@@ -13,6 +13,7 @@ This file is the project orientation sheet for Codex and maintainers.
 ## Main Files
 
 - `amnezia_traffic_collector.py`: collector, report builder, `collect`, `report`, `status`, `doctor`
+- `amnezia_dashboard_server.py`: request-time dashboard server for fresh page loads
 - collector tracks current channel utilization, daily average load, and daily peak bandwidth
 - the dashboard shows a top traffic banner with load, headroom, and risk state
 - `amnezia_server_info.json`: server metadata, SSH details, bandwidth limit, notes

@@ -15,16 +15,18 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md).
 - estimates current channel utilization, daily average load, day peak, and per-peer share of the live flow
 - shows a top-of-page traffic banner with channel load, limit, headroom, and risk state
 - renders a lightweight HTML dashboard plus JSON and text reports
+- serves the dashboard fresh on each page load so F5 shows the latest snapshot without background refresh
 - exposes a Windows launcher that opens the dashboard through SSH
 - supports a local installation into `%LOCALAPPDATA%\AutostopVPN` with a desktop shortcut
 
 ## Repository Layout
 
 - [amnezia_traffic_collector.py](amnezia_traffic_collector.py): telemetry collector, report writer, and dashboard generator
+- [amnezia_dashboard_server.py](amnezia_dashboard_server.py): request-time dashboard server for fresh page loads
 - [amnezia_server_info.json](amnezia_server_info.json): server metadata and editable dashboard notes
 - [amnezia-traffic-collector.service](amnezia-traffic-collector.service): systemd unit for scheduled collection
 - [amnezia-traffic-collector.timer](amnezia-traffic-collector.timer): systemd timer for the collector
-- [amnezia-dashboard.service](amnezia-dashboard.service): local HTTP service for the generated dashboard
+- [amnezia-dashboard.service](amnezia-dashboard.service): request-time HTTP service for the latest dashboard snapshot
 - [open_amnezia_dashboard.ps1](open_amnezia_dashboard.ps1): PowerShell launcher for Windows
 - [open_amnezia_dashboard.cmd](open_amnezia_dashboard.cmd): cmd wrapper for the PowerShell launcher
 - [start_autostopvpn.ps1](start_autostopvpn.ps1): stable desktop entrypoint for the installed app
@@ -85,6 +87,7 @@ The collector writes into `amnezia_traffic_collector.py`'s data directory:
 - `totals.json`: accumulated totals per peer
 - `summary.json`: current dashboard snapshot
 - `summary.json` includes `server.bandwidth` with channel load and headroom
+- the dashboard server renders the latest `summary.json` on each request, so F5 reloads fresh data without background refresh
 - `daily/YYYY-MM-DD.json`: day-level counters
 - `reports/current_users.csv`: peer report
 - `reports/current_users.md`: peer report in markdown
