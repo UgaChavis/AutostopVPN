@@ -881,7 +881,7 @@ def render_dashboard(summary: Dict[str, object]) -> str:
 </head>
 <body>
   <h1>Панель Amnezia VPN</h1>
-  <p class="muted">Обновлено: {updated_at} | Часовой пояс: {timezone} | Окно текущей скорости: {sample_window} сек. Обновите страницу F5, чтобы подтянуть свежие данные.</p>
+  <p class="muted">Обновлено: {updated_at} | Часовой пояс: {timezone} | Окно текущей скорости: {sample_window} сек. Основной интерфейс - Autostop VPN Shell.</p>
   <p><span class="status {status_class}">{status_label}</span></p>
 
   <div class="traffic-banner">
@@ -1663,7 +1663,8 @@ def doctor() -> int:
             any(path.exists() for path in server_info_candidates),
             "amnezia_server_info.json is missing",
         ),
-        ("dashboard launcher", (script_root / "open_amnezia_dashboard.ps1").exists(), "open_amnezia_dashboard.ps1 is missing"),
+        ("shell launcher", (script_root / "open_amnezia_dashboard.ps1").exists(), "open_amnezia_dashboard.ps1 is missing"),
+        ("shell app", (script_root / "amnezia_vpn_shell.py").exists(), "amnezia_vpn_shell.py is missing"),
         ("dashboard server", (script_root / "amnezia_dashboard_server.py").exists(), "amnezia_dashboard_server.py is missing"),
         ("collector service", (script_root / "amnezia-traffic-collector.service").exists(), "amnezia-traffic-collector.service is missing"),
         ("dashboard service", (script_root / "amnezia-dashboard.service").exists(), "amnezia-dashboard.service is missing"),

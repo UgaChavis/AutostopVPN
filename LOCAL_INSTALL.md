@@ -45,5 +45,5 @@ python .\amnezia_traffic_collector.py doctor
 ## Notes
 
 - The desktop shortcut launches `start_autostopvpn.ps1`.
-- The launcher then opens the SSH tunnel and dashboard.
+- The launcher then opens the SSH tunnel and native shell window.
 - The collector and dashboard services still run on the server.

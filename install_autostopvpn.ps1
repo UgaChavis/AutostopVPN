@@ -43,7 +43,7 @@ function New-DesktopShortcut {
     $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$TargetScript`""
     $shortcut.WorkingDirectory = $WorkingDirectory
     $shortcut.IconLocation = "$powershell,0"
-    $shortcut.Description = "Autostop VPN dashboard launcher"
+    $shortcut.Description = "Autostop VPN shell launcher"
     $shortcut.Save()
 }
 

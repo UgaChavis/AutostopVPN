@@ -30,6 +30,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `amnezia-dashboard.service`
 - `amnezia_server_info.json`
 - `amnezia_dashboard_server.py`
+- `amnezia_vpn_shell.py`
 - `open_amnezia_dashboard.ps1`
 - `open_amnezia_dashboard.cmd`
 - `tests/test_amnezia_traffic_collector.py`
@@ -44,7 +45,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `reports/current_users.csv`: machine-readable peer report
 - `reports/current_users.md`: text report
 - `web/dashboard.json`: dashboard JSON
-- `web/index.html`: lightweight local dashboard
+- `web/index.html`: lightweight local dashboard fallback
 - `/`: dashboard server response rendered from the latest `summary.json` on each request
 
 ## Metrics
@@ -54,7 +55,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - current channel load versus configured or auto-detected bandwidth limit
 - current load, daily average, and daily peak bandwidth for the server channel
 - a top banner that shows whether the channel is normal, near limit, or overloaded
-- page reload reads the latest snapshot directly from the dashboard server, without background auto-refresh
+- the native shell app refreshes the latest snapshot automatically while it is open
 - per-peer share of the live flow for quick hotspot detection
 - explicit traffic periods for current day and full accounting interval
 - current speeds based on the latest sample window
@@ -93,7 +94,7 @@ The collector reads these environment variables:
 5. If the provider cap is known, set `bandwidth_limit_mbps`; otherwise the collector will fall back to the default network interface speed when available.
 6. Run one manual collector execution.
 7. Reload `systemd`, restart the collector timer, enable the localhost dashboard service and verify `127.0.0.1:18080`.
-8. Open the page through an SSH tunnel from Windows.
+8. Open the shell app through an SSH tunnel from Windows.
 
 ## Rollback
 
@@ -114,6 +115,7 @@ It:
 
 - opens an SSH tunnel from `127.0.0.1:18765` to `127.0.0.1:18080` on the server
 - reuses an existing tunnel when possible
-- opens the dashboard in the default browser
+- launches the native Autostop VPN shell window
+- refreshes the view every few seconds while the window is open
 
 No public dashboard port is exposed to the internet.

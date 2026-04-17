@@ -6,7 +6,7 @@ param(
     [int]$RemotePort = 18080
 )
 
-$dashboardUrl = "http://127.0.0.1:${LocalPort}/"
+$dashboardApiUrl = "http://127.0.0.1:${LocalPort}/dashboard.json"
 $tunnelSpec = "127.0.0.1:${LocalPort}:127.0.0.1:${RemotePort}"
 
 function Test-LocalPort {
@@ -25,6 +25,17 @@ function Test-LocalPort {
     } catch {
         return $false
     }
+}
+
+function Resolve-PythonExecutable {
+    foreach ($candidate in @("pythonw.exe", "pyw.exe", "python.exe", "py.exe")) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+
+    throw "Python executable not found. Install Python with tkinter support."
 }
 
 if (-not $KeyPath) {
@@ -77,7 +88,25 @@ if (-not (Test-LocalPort -Port $LocalPort)) {
         }
         throw "Dashboard tunnel failed, ssh exited with code $($sshProcess.ExitCode).$tail"
     }
-    throw "Dashboard tunnel is not available on $dashboardUrl"
+    throw "Dashboard tunnel is not available on $dashboardApiUrl"
 }
 
-Start-Process $dashboardUrl | Out-Null
+$pythonPath = Resolve-PythonExecutable
+$shellScript = Join-Path $PSScriptRoot "amnezia_vpn_shell.py"
+if (-not (Test-Path $shellScript)) {
+    throw "Shell app not found: $shellScript"
+}
+
+$shellProcess = $null
+try {
+    $shellProcess = Start-Process -FilePath $pythonPath -PassThru -ArgumentList @(
+        $shellScript,
+        "--url", $dashboardApiUrl,
+        "--refresh-seconds", "5"
+    ) -WorkingDirectory $PSScriptRoot
+    Wait-Process -Id $shellProcess.Id
+} finally {
+    if ($sshProcess -and -not $sshProcess.HasExited) {
+        Stop-Process -Id $sshProcess.Id -Force -ErrorAction SilentlyContinue
+    }
+}

@@ -13,11 +13,12 @@ This file is the project orientation sheet for Codex and maintainers.
 ## Main Files
 
 - `amnezia_traffic_collector.py`: collector, report builder, `collect`, `report`, `status`, `doctor`
+- `amnezia_vpn_shell.py`: native desktop shell that displays the live snapshot
 - `amnezia_dashboard_server.py`: request-time dashboard server for fresh page loads
 - collector tracks current channel utilization, daily average load, and daily peak bandwidth
 - the dashboard shows a top traffic banner with load, headroom, and risk state
 - `amnezia_server_info.json`: server metadata, SSH details, bandwidth limit, notes
-- `open_amnezia_dashboard.ps1` and `open_amnezia_dashboard.cmd`: Windows dashboard launchers
+- `open_amnezia_dashboard.ps1` and `open_amnezia_dashboard.cmd`: Windows shell launchers
 - `start_autostopvpn.ps1`: stable desktop entrypoint
 - `install_autostopvpn.ps1`: local install and desktop shortcut creation
 - `remove_autostopvpn.ps1`: local uninstall
@@ -30,8 +31,8 @@ This file is the project orientation sheet for Codex and maintainers.
 1. Read peer and server state from Docker and host probes.
 2. Build current peer rows and traffic deltas.
 3. Write JSON, CSV, MD, and HTML outputs under the data directory.
-4. Serve the dashboard locally on the server.
-5. Open the dashboard from Windows through SSH.
+4. Serve the dashboard JSON locally on the server.
+5. Open the native shell window from Windows through SSH.
 
 ## Output Targets
 

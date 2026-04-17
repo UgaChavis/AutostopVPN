@@ -14,20 +14,21 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md).
 - captures server health signals: load, memory, disk, uptime, ping
 - estimates current channel utilization, daily average load, day peak, and per-peer share of the live flow
 - shows a top-of-page traffic banner with channel load, limit, headroom, and risk state
-- renders a lightweight HTML dashboard plus JSON and text reports
-- serves the dashboard fresh on each page load so F5 shows the latest snapshot without background refresh
-- exposes a Windows launcher that opens the dashboard through SSH
+- renders JSON and text reports and keeps a lightweight HTML fallback view for diagnostics
+- serves the latest snapshot on the server side and exposes it to the desktop shell as JSON
+- opens a native Windows shell window that refreshes the latest snapshot through SSH
 - supports a local installation into `%LOCALAPPDATA%\AutostopVPN` with a desktop shortcut
 
 ## Repository Layout
 
 - [amnezia_traffic_collector.py](amnezia_traffic_collector.py): telemetry collector, report writer, and dashboard generator
+- [amnezia_vpn_shell.py](amnezia_vpn_shell.py): native Windows shell UI for the live VPN snapshot
 - [amnezia_dashboard_server.py](amnezia_dashboard_server.py): request-time dashboard server for fresh page loads
 - [amnezia_server_info.json](amnezia_server_info.json): server metadata and editable dashboard notes
 - [amnezia-traffic-collector.service](amnezia-traffic-collector.service): systemd unit for scheduled collection
 - [amnezia-traffic-collector.timer](amnezia-traffic-collector.timer): systemd timer for the collector
-- [amnezia-dashboard.service](amnezia-dashboard.service): request-time HTTP service for the latest dashboard snapshot
-- [open_amnezia_dashboard.ps1](open_amnezia_dashboard.ps1): PowerShell launcher for Windows
+- [amnezia-dashboard.service](amnezia-dashboard.service): localhost HTTP service for the latest dashboard snapshot
+- [open_amnezia_dashboard.ps1](open_amnezia_dashboard.ps1): PowerShell launcher for the native shell app
 - [open_amnezia_dashboard.cmd](open_amnezia_dashboard.cmd): cmd wrapper for the PowerShell launcher
 - [start_autostopvpn.ps1](start_autostopvpn.ps1): stable desktop entrypoint for the installed app
 - [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut
@@ -45,9 +46,9 @@ collector builds traffic, activity, and server summary
     ->
 data/ JSON + reports/ CSV/MD + web/ dashboard files
     ->
-amnezia-dashboard.service serves web/ on 127.0.0.1:18080
+amnezia-dashboard.service serves dashboard JSON on 127.0.0.1:18080
     ->
-Windows launcher opens SSH tunnel to the dashboard
+Windows launcher opens SSH tunnel and starts the shell UI
 ```
 
 ## Configuration
@@ -87,12 +88,12 @@ The collector writes into `amnezia_traffic_collector.py`'s data directory:
 - `totals.json`: accumulated totals per peer
 - `summary.json`: current dashboard snapshot
 - `summary.json` includes `server.bandwidth` with channel load and headroom
-- the dashboard server renders the latest `summary.json` on each request, so F5 reloads fresh data without background refresh
+- the dashboard server renders the latest `summary.json` on each request for the native shell app
 - `daily/YYYY-MM-DD.json`: day-level counters
 - `reports/current_users.csv`: peer report
 - `reports/current_users.md`: peer report in markdown
 - `web/dashboard.json`: JSON version of the dashboard
-- `web/index.html`: HTML dashboard
+- `web/index.html`: HTML fallback dashboard for technical diagnostics
 - `aliases.csv`: optional peer labels
 
 ## Local Work
@@ -115,13 +116,14 @@ Run a live collection pass on a machine that has Docker and `ping`:
 python .\amnezia_traffic_collector.py collect
 ```
 
-Open the dashboard locally through SSH:
+Open the shell UI locally through SSH:
 
 ```powershell
 .\open_amnezia_dashboard.ps1
 ```
 
-The launcher checks `autostopvpn_server_ed25519` first and falls back to `autostopcrm_server_ed25519` if the local key is not present.
+The launcher checks `autostopvpn_server_ed25519` first and falls back to `autostopcrm_server_ed25519` if the local key is not present. It then opens the native shell window instead of a browser.
+The shell keeps refreshing the live snapshot while it is open, and the collector timer on the server now runs every 20 seconds by default.
 
 Inspect the latest cached state:
 
@@ -173,11 +175,12 @@ Typical deployment targets:
 - collector service: `amnezia-traffic-collector.service`
 - collector timer: `amnezia-traffic-collector.timer`
 - dashboard service: `amnezia-dashboard.service`
+- shell app: `amnezia_vpn_shell.py`
 
 See [AMNEZIA_VPN_MONITORING.md](AMNEZIA_VPN_MONITORING.md) for the step-by-step deployment and rollback flow.
 
 ## Notes
 
 - The collector never changes WireGuard peer configuration.
-- The dashboard is intentionally localhost-only on the server.
+- The dashboard API is intentionally localhost-only on the server.
 - If you change the server host, SSH key, or project path, update `amnezia_server_info.json` first.
