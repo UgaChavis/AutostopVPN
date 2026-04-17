@@ -13,6 +13,7 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md).
 - tracks active peers from handshake age
 - captures server health signals: load, memory, disk, uptime, ping
 - estimates current channel utilization, daily average load, day peak, and per-peer share of the live flow
+- shows a top-of-page traffic banner with channel load, limit, headroom, and risk state
 - renders a lightweight HTML dashboard plus JSON and text reports
 - exposes a Windows launcher that opens the dashboard through SSH
 - supports a local installation into `%LOCALAPPDATA%\AutostopVPN` with a desktop shortcut

@@ -14,6 +14,7 @@ This file is the project orientation sheet for Codex and maintainers.
 
 - `amnezia_traffic_collector.py`: collector, report builder, `collect`, `report`, `status`, `doctor`
 - collector tracks current channel utilization, daily average load, and daily peak bandwidth
+- the dashboard shows a top traffic banner with load, headroom, and risk state
 - `amnezia_server_info.json`: server metadata, SSH details, bandwidth limit, notes
 - `open_amnezia_dashboard.ps1` and `open_amnezia_dashboard.cmd`: Windows dashboard launchers
 - `start_autostopvpn.ps1`: stable desktop entrypoint

@@ -308,6 +308,8 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertEqual(summary["warnings"], [])
         self.assertEqual(web_summary["vpn"]["listen_port"], 47895)
         self.assertIn("Панель Amnezia VPN", html)
+        self.assertIn("traffic-banner", html)
+        self.assertIn("Загрузка канала", html)
         self.assertIn("current_share_percent", report)
         self.assertIn("vpn_ip", report)
         self.assertIn("Пик потока за день:", report_md)
@@ -395,6 +397,7 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertIn("Bandwidth: current=", output)
         self.assertIn("avg_day=4.00 KiB/s", output)
         self.assertIn("peak_day=8.00 KiB/s", output)
+        self.assertIn("state=", output)
         self.assertIn("Warnings: 1", output)
         self.assertIn("Peer A", output)
 

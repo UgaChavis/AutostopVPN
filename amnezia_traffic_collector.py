@@ -455,6 +455,54 @@ def update_daily_bandwidth_stats(
     return daily_bandwidth
 
 
+def describe_bandwidth_state(
+    capacity_bytes_per_sec: int,
+    utilization_percent: Optional[float],
+    over_capacity_bytes_per_sec: int,
+) -> Dict[str, object]:
+    if capacity_bytes_per_sec <= 0:
+        return {
+            "class": "muted",
+            "label": "лимит не задан",
+            "note": "Укажите bandwidth_limit_mbps в amnezia_server_info.json, чтобы увидеть процент загрузки.",
+            "bar_width_percent": 0.0,
+        }
+
+    utilization = float(utilization_percent or 0.0)
+    bar_width_percent = min(max(utilization, 0.0), 100.0)
+
+    if over_capacity_bytes_per_sec > 0 or utilization >= 95.0:
+        return {
+            "class": "danger",
+            "label": "перегрузка",
+            "note": "Текущий поток уже упирается в лимит канала и скорость у пользователей будет падать.",
+            "bar_width_percent": bar_width_percent,
+        }
+
+    if utilization >= 85.0:
+        return {
+            "class": "warn",
+            "label": "канал близок к пределу",
+            "note": "В пиковые часы может начаться просадка скорости. Следите за пиком и headroom.",
+            "bar_width_percent": bar_width_percent,
+        }
+
+    if utilization >= 60.0:
+        return {
+            "class": "warn",
+            "label": "нагрузка растет",
+            "note": "Канал еще не забит, но запас уже уменьшается.",
+            "bar_width_percent": bar_width_percent,
+        }
+
+    return {
+        "class": "ok",
+        "label": "норма",
+        "note": "Запас канала достаточный.",
+        "bar_width_percent": bar_width_percent,
+    }
+
+
 def format_bytes(value: int) -> str:
     units = ["B", "KiB", "MiB", "GiB", "TiB"]
     size = float(value)
@@ -662,6 +710,14 @@ def render_dashboard(summary: Dict[str, object]) -> str:
     bandwidth_day_peak_label = format_rate(float(bandwidth_daily.get("peak_current_total_bps", 0) or 0))
     bandwidth_day_peak_utilization_label = format_percent(bandwidth_daily.get("peak_utilization_percent"))
     bandwidth_context = bandwidth_source or bandwidth_interface or "auto"
+    bandwidth_state = describe_bandwidth_state(
+        bandwidth_capacity_bps,
+        bandwidth_utilization if bandwidth_utilization is not None else None,
+        int(bandwidth.get("over_capacity_bytes_per_sec", 0) or 0),
+    )
+    bandwidth_current_of_limit = (
+        f"{format_rate(current_total_bps)} / {bandwidth_limit_label}" if bandwidth_capacity_bps else format_rate(current_total_bps)
+    )
 
     return """<!doctype html>
 <html lang="ru">
@@ -708,6 +764,62 @@ def render_dashboard(summary: Dict[str, object]) -> str:
     }}
     .status.ok {{ color: var(--ok); }}
     .status.warn {{ color: var(--warn); }}
+    .status.danger {{ color: #8b1c1c; }}
+    .traffic-banner {{
+      margin: 14px 0 18px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff 0%, #f4f7ef 100%);
+    }}
+    .traffic-banner-top {{
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }}
+    .traffic-title {{
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }}
+    .traffic-value {{
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.1;
+      margin: 2px 0 4px;
+    }}
+    .traffic-subvalue {{
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .traffic-state {{
+      border: 1px solid currentColor;
+      padding: 4px 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }}
+    .traffic-state.ok {{ color: var(--ok); }}
+    .traffic-state.warn {{ color: var(--warn); }}
+    .traffic-state.danger {{ color: #8b1c1c; }}
+    .traffic-state.muted {{ color: var(--muted); }}
+    .traffic-meter {{
+      margin: 12px 0 8px;
+      height: 12px;
+      background: #e4e6de;
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }}
+    .traffic-fill {{
+      height: 100%;
+      width: 0%;
+      background: var(--ok);
+    }}
+    .traffic-fill.warn {{ background: var(--warn); }}
+    .traffic-fill.danger {{ background: #8b1c1c; }}
+    .traffic-fill.muted {{ background: #a3a7a0; }}
     table {{
       width: 100%;
       border-collapse: collapse;
@@ -772,6 +884,21 @@ def render_dashboard(summary: Dict[str, object]) -> str:
   <h1>Панель Amnezia VPN</h1>
   <p class="muted">Обновлено: {updated_at} | Часовой пояс: {timezone} | Окно текущей скорости: {sample_window} сек.</p>
   <p><span class="status {status_class}">{status_label}</span></p>
+
+  <div class="traffic-banner">
+    <div class="traffic-banner-top">
+      <div>
+        <div class="traffic-title">Загрузка канала</div>
+        <div class="traffic-value">{bandwidth_utilization}</div>
+        <div class="traffic-subvalue">{bandwidth_current_of_limit}</div>
+      </div>
+      <div class="traffic-state {bandwidth_state_class}">{bandwidth_state_label}</div>
+    </div>
+    <div class="traffic-meter" aria-label="Загрузка канала">
+      <div class="traffic-fill {bandwidth_state_class}" style="width: {bandwidth_bar_width}%"></div>
+    </div>
+    <div class="muted">{bandwidth_state_note}</div>
+  </div>
 
   <div class="grid">
     <div class="panel">
@@ -971,6 +1098,11 @@ def render_dashboard(summary: Dict[str, object]) -> str:
         bandwidth_limit=esc(bandwidth_limit_label),
         bandwidth_utilization=esc(bandwidth_utilization_label),
         bandwidth_headroom=esc(bandwidth_headroom_label),
+        bandwidth_current_of_limit=esc(bandwidth_current_of_limit),
+        bandwidth_state_class=esc(bandwidth_state["class"]),
+        bandwidth_state_label=esc(bandwidth_state["label"]),
+        bandwidth_state_note=esc(bandwidth_state["note"]),
+        bandwidth_bar_width=esc(f"{bandwidth_state['bar_width_percent']:.2f}"),
         bandwidth_day_peak_utilization=esc(bandwidth_day_peak_utilization_label),
         bandwidth_context=esc(bandwidth_context),
         ping_target=esc(ping["target"]),
@@ -1014,6 +1146,11 @@ def write_reports(totals: Dict[str, object], daily: Dict[str, object], summary: 
     bandwidth_day_average = format_rate(float(bandwidth_daily.get("average_current_total_bps", 0.0) or 0.0))
     bandwidth_day_peak = format_rate(float(bandwidth_daily.get("peak_current_total_bps", 0) or 0))
     bandwidth_day_peak_utilization = format_percent(bandwidth_daily.get("peak_utilization_percent"))
+    bandwidth_state = describe_bandwidth_state(
+        capacity_bps,
+        bandwidth.get("utilization_percent"),
+        int(bandwidth.get("over_capacity_bytes_per_sec", 0) or 0),
+    )
 
     csv_path = REPORTS_DIR / "current_users.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
@@ -1075,6 +1212,7 @@ def write_reports(totals: Dict[str, object], daily: Dict[str, object], summary: 
         f"Пиковая загрузка канала: {bandwidth_day_peak_utilization}",
         f"Лимит канала: {bandwidth_limit}",
         f"Загрузка канала: {bandwidth_utilization}",
+        f"Состояние канала: {bandwidth_state['label']}",
         "",
         "| Имя | VPN IP | Активен | Handshake | Текущая | Доля потока | Средняя за день | Сегодня | Всего | Ключ |",
         "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
@@ -1454,6 +1592,11 @@ def render_status(summary: Dict[str, object]) -> List[str]:
     bandwidth_daily = bandwidth.get("daily", {})
     bandwidth_day_average_label = format_rate(float(bandwidth_daily.get("average_current_total_bps", 0.0) or 0.0))
     bandwidth_day_peak_label = format_rate(float(bandwidth_daily.get("peak_current_total_bps", 0) or 0))
+    bandwidth_state = describe_bandwidth_state(
+        bandwidth_capacity_bps,
+        bandwidth.get("utilization_percent"),
+        int(bandwidth.get("over_capacity_bytes_per_sec", 0) or 0),
+    )
     lines = [
         f"Обновлено: {updated_at}",
         f"Контейнер: {container.get('name', '')} [{container.get('status', '')}] image={container.get('image', '')}",
@@ -1480,7 +1623,8 @@ def render_status(summary: Dict[str, object]) -> List[str]:
             f"peak_day={bandwidth_day_peak_label} "
             f"limit={bandwidth_limit_label} "
             f"util={format_percent(server.get('bandwidth', {}).get('utilization_percent'))} "
-            f"headroom={bandwidth_headroom_label}"
+            f"headroom={bandwidth_headroom_label} "
+            f"state={bandwidth_state['label']}"
         ),
         f"Warnings: {len(warnings)}",
     ]
