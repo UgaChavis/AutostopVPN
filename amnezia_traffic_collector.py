@@ -401,6 +401,60 @@ def get_server_status(
     }
 
 
+def update_daily_bandwidth_stats(
+    daily: Dict[str, object],
+    current_time: datetime,
+    current_total_bps: int,
+    bandwidth: Dict[str, object],
+) -> Dict[str, object]:
+    daily_bandwidth = daily.setdefault(
+        "bandwidth",
+        {
+            "sample_count": 0,
+            "sum_current_total_bps": 0.0,
+            "average_current_total_bps": 0.0,
+            "peak_current_total_bps": 0,
+            "peak_utilization_percent": None,
+            "peak_at": None,
+            "last_current_total_bps": 0,
+            "last_utilization_percent": None,
+            "last_headroom_bytes_per_sec": 0,
+            "updated_at": None,
+        },
+    )
+
+    previous_peak_bps = int(daily_bandwidth.get("peak_current_total_bps", 0) or 0)
+    sample_count = int(daily_bandwidth.get("sample_count", 0) or 0) + 1
+    sum_current_total_bps = float(daily_bandwidth.get("sum_current_total_bps", 0.0) or 0.0) + float(current_total_bps)
+    current_utilization_percent = bandwidth.get("utilization_percent")
+    peak_utilization_percent = daily_bandwidth.get("peak_utilization_percent")
+    if current_utilization_percent is not None:
+        peak_utilization_percent = max(float(peak_utilization_percent or 0.0), float(current_utilization_percent))
+
+    if current_total_bps >= previous_peak_bps:
+        peak_at = current_time.isoformat()
+        peak_current_total_bps = int(current_total_bps)
+    else:
+        peak_at = daily_bandwidth.get("peak_at")
+        peak_current_total_bps = previous_peak_bps
+
+    daily_bandwidth.update(
+        {
+            "sample_count": sample_count,
+            "sum_current_total_bps": sum_current_total_bps,
+            "average_current_total_bps": round(sum_current_total_bps / sample_count, 2) if sample_count else 0.0,
+            "peak_current_total_bps": peak_current_total_bps,
+            "peak_utilization_percent": peak_utilization_percent,
+            "peak_at": peak_at,
+            "last_current_total_bps": int(current_total_bps),
+            "last_utilization_percent": current_utilization_percent,
+            "last_headroom_bytes_per_sec": int(bandwidth.get("headroom_bytes_per_sec", 0) or 0),
+            "updated_at": current_time.isoformat(),
+        }
+    )
+    return daily_bandwidth
+
+
 def format_bytes(value: int) -> str:
     units = ["B", "KiB", "MiB", "GiB", "TiB"]
     size = float(value)
@@ -598,11 +652,15 @@ def render_dashboard(summary: Dict[str, object]) -> str:
     bandwidth_capacity_bps = int(bandwidth.get("capacity_bytes_per_sec", 0) or 0)
     bandwidth_utilization = bandwidth.get("utilization_percent")
     bandwidth_headroom_bps = int(bandwidth.get("headroom_bytes_per_sec", 0) or 0)
+    bandwidth_daily = bandwidth.get("daily", {})
     bandwidth_source = bandwidth.get("source", "")
     bandwidth_interface = bandwidth.get("interface", "")
     bandwidth_limit_label = format_rate(bandwidth_capacity_bps) if bandwidth_capacity_bps else "н/д"
     bandwidth_utilization_label = format_percent(bandwidth_utilization)
     bandwidth_headroom_label = format_rate(bandwidth_headroom_bps) if bandwidth_capacity_bps else "н/д"
+    bandwidth_day_average_label = format_rate(float(bandwidth_daily.get("average_current_total_bps", 0.0) or 0.0))
+    bandwidth_day_peak_label = format_rate(float(bandwidth_daily.get("peak_current_total_bps", 0) or 0))
+    bandwidth_day_peak_utilization_label = format_percent(bandwidth_daily.get("peak_utilization_percent"))
     bandwidth_context = bandwidth_source or bandwidth_interface or "auto"
 
     return """<!doctype html>
@@ -735,6 +793,8 @@ def render_dashboard(summary: Dict[str, object]) -> str:
     <div class="panel">
       <strong>Канал</strong><br>
       Текущий поток: {current_total}<br>
+      Средний поток за день: {bandwidth_day_average}<br>
+      Пик за день: {bandwidth_day_peak} ({bandwidth_day_peak_utilization})<br>
       Приём / передача: {current_rx} / {current_tx}<br>
       Лимит: {bandwidth_limit}<br>
       Загрузка: {bandwidth_utilization}<br>
@@ -904,11 +964,14 @@ def render_dashboard(summary: Dict[str, object]) -> str:
         disk_used_pct=esc(format_percent(server["disk_root"]["used_percent"])),
         uptime=esc(format_age(server["uptime_seconds"])),
         current_total=esc(format_rate(current_total_bps)),
+        bandwidth_day_average=esc(bandwidth_day_average_label),
+        bandwidth_day_peak=esc(bandwidth_day_peak_label),
         current_rx=esc(format_rate(current_rx_bps)),
         current_tx=esc(format_rate(current_tx_bps)),
         bandwidth_limit=esc(bandwidth_limit_label),
         bandwidth_utilization=esc(bandwidth_utilization_label),
         bandwidth_headroom=esc(bandwidth_headroom_label),
+        bandwidth_day_peak_utilization=esc(bandwidth_day_peak_utilization_label),
         bandwidth_context=esc(bandwidth_context),
         ping_target=esc(ping["target"]),
         latency=esc(
@@ -947,6 +1010,10 @@ def write_reports(totals: Dict[str, object], daily: Dict[str, object], summary: 
     capacity_bps = int(bandwidth.get("capacity_bytes_per_sec", 0) or 0)
     bandwidth_limit = format_rate(capacity_bps) if capacity_bps else "н/д"
     bandwidth_utilization = format_percent(bandwidth.get("utilization_percent"))
+    bandwidth_daily = bandwidth.get("daily", {})
+    bandwidth_day_average = format_rate(float(bandwidth_daily.get("average_current_total_bps", 0.0) or 0.0))
+    bandwidth_day_peak = format_rate(float(bandwidth_daily.get("peak_current_total_bps", 0) or 0))
+    bandwidth_day_peak_utilization = format_percent(bandwidth_daily.get("peak_utilization_percent"))
 
     csv_path = REPORTS_DIR / "current_users.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
@@ -1003,6 +1070,9 @@ def write_reports(totals: Dict[str, object], daily: Dict[str, object], summary: 
         f"Часовой пояс: {summary.get('timezone', TIMEZONE)}",
         f"Окно текущей скорости: {summary.get('vpn', {}).get('sample_window_seconds', 0)} сек.",
         f"Текущий суммарный поток: {format_rate(int(summary.get('vpn', {}).get('current_total_bps', 0) or 0))}",
+        f"Средний поток за день: {bandwidth_day_average}",
+        f"Пик потока за день: {bandwidth_day_peak}",
+        f"Пиковая загрузка канала: {bandwidth_day_peak_utilization}",
         f"Лимит канала: {bandwidth_limit}",
         f"Загрузка канала: {bandwidth_utilization}",
         "",
@@ -1216,6 +1286,23 @@ def collect() -> int:
     day_started_at = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
     server_info = load_server_info()
     server_status = get_server_status(current_time, server_info=server_info, current_total_bps=current_total_bps)
+    daily_bandwidth = update_daily_bandwidth_stats(
+        daily=daily,
+        current_time=current_time,
+        current_total_bps=current_total_bps,
+        bandwidth=server_status.get("bandwidth", {}),
+    )
+    bandwidth_daily = {
+        "sample_count": daily_bandwidth["sample_count"],
+        "average_current_total_bps": daily_bandwidth["average_current_total_bps"],
+        "peak_current_total_bps": daily_bandwidth["peak_current_total_bps"],
+        "peak_utilization_percent": daily_bandwidth["peak_utilization_percent"],
+        "peak_at": daily_bandwidth["peak_at"],
+        "last_current_total_bps": daily_bandwidth["last_current_total_bps"],
+        "last_utilization_percent": daily_bandwidth["last_utilization_percent"],
+        "last_headroom_bytes_per_sec": daily_bandwidth["last_headroom_bytes_per_sec"],
+    }
+    server_status["bandwidth"]["daily"] = bandwidth_daily
     summary = {
         "updated_at": current_time.isoformat(),
         "timezone": TIMEZONE,
@@ -1299,6 +1386,16 @@ def build_default_summary(current_time: datetime, totals: Dict[str, object] | No
                 "utilization_percent": None,
                 "headroom_bytes_per_sec": 0,
                 "over_capacity_bytes_per_sec": 0,
+                "daily": {
+                    "sample_count": 0,
+                    "average_current_total_bps": 0.0,
+                    "peak_current_total_bps": 0,
+                    "peak_utilization_percent": None,
+                    "peak_at": None,
+                    "last_current_total_bps": 0,
+                    "last_utilization_percent": None,
+                    "last_headroom_bytes_per_sec": 0,
+                },
             },
         },
         "server_info": default_server_info(),
@@ -1354,6 +1451,9 @@ def render_status(summary: Dict[str, object]) -> List[str]:
     bandwidth_headroom_label = (
         format_rate(int(bandwidth.get("headroom_bytes_per_sec", 0) or 0)) if bandwidth_capacity_bps else "н/д"
     )
+    bandwidth_daily = bandwidth.get("daily", {})
+    bandwidth_day_average_label = format_rate(float(bandwidth_daily.get("average_current_total_bps", 0.0) or 0.0))
+    bandwidth_day_peak_label = format_rate(float(bandwidth_daily.get("peak_current_total_bps", 0) or 0))
     lines = [
         f"Обновлено: {updated_at}",
         f"Контейнер: {container.get('name', '')} [{container.get('status', '')}] image={container.get('image', '')}",
@@ -1376,6 +1476,8 @@ def render_status(summary: Dict[str, object]) -> List[str]:
         (
             "Bandwidth: "
             f"current={format_rate(int(server.get('bandwidth', {}).get('current_bytes_per_sec', 0) or 0))} "
+            f"avg_day={bandwidth_day_average_label} "
+            f"peak_day={bandwidth_day_peak_label} "
             f"limit={bandwidth_limit_label} "
             f"util={format_percent(server.get('bandwidth', {}).get('utilization_percent'))} "
             f"headroom={bandwidth_headroom_label}"

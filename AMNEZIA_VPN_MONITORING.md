@@ -50,6 +50,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - traffic per peer
 - sortable peer table by name, IP, handshake, current rate, daily rate and total traffic
 - current channel load versus configured or auto-detected bandwidth limit
+- current load, daily average, and daily peak bandwidth for the server channel
 - per-peer share of the live flow for quick hotspot detection
 - explicit traffic periods for current day and full accounting interval
 - current speeds based on the latest sample window

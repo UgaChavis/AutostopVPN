@@ -125,6 +125,40 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertEqual(capacity["capacity_mbps"], 1000.0)
         self.assertEqual(capacity["source"], "server_info.json:bandwidth_limit_mbps")
 
+    def test_update_daily_bandwidth_stats_tracks_peak_and_average(self) -> None:
+        daily = {
+            "bandwidth": {
+                "sample_count": 2,
+                "sum_current_total_bps": 10000.0,
+                "average_current_total_bps": 5000.0,
+                "peak_current_total_bps": 8000,
+                "peak_utilization_percent": 6.4,
+                "peak_at": "2026-04-17T12:20:00+00:00",
+                "last_current_total_bps": 8000,
+                "last_utilization_percent": 6.4,
+                "last_headroom_bytes_per_sec": 124992000,
+                "updated_at": "2026-04-17T12:20:00+00:00",
+            }
+        }
+        bandwidth = {
+            "utilization_percent": 0.01,
+            "headroom_bytes_per_sec": 124996928,
+        }
+
+        updated = collector.update_daily_bandwidth_stats(
+            daily,
+            self.current_time,
+            3072,
+            bandwidth,
+        )
+
+        self.assertEqual(updated["sample_count"], 3)
+        self.assertEqual(updated["peak_current_total_bps"], 8000)
+        self.assertEqual(updated["peak_at"], "2026-04-17T12:20:00+00:00")
+        self.assertAlmostEqual(updated["average_current_total_bps"], 4357.33, places=2)
+        self.assertEqual(updated["last_current_total_bps"], 3072)
+        self.assertEqual(updated["last_headroom_bytes_per_sec"], 124996928)
+
     def test_collect_writes_summary_and_dashboard_outputs(self) -> None:
         peer = {
             "public_key": "ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210abcd",
@@ -221,6 +255,30 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
             stack.enter_context(patch.object(collector, "get_wg_dump", return_value=(interface_meta, [peer])))
             (base_dir / "data").mkdir(parents=True, exist_ok=True)
             (base_dir / "data" / "state.json").write_text(json.dumps(state), encoding="utf-8")
+            daily_dir = base_dir / "data" / "daily"
+            daily_dir.mkdir(parents=True, exist_ok=True)
+            (daily_dir / "2026-04-17.json").write_text(
+                json.dumps(
+                    {
+                        "date": "2026-04-17",
+                        "timezone": "UTC",
+                        "peers": {},
+                        "bandwidth": {
+                            "sample_count": 2,
+                            "sum_current_total_bps": 10000.0,
+                            "average_current_total_bps": 5000.0,
+                            "peak_current_total_bps": 8000,
+                            "peak_utilization_percent": 6.4,
+                            "peak_at": "2026-04-17T12:20:00+00:00",
+                            "last_current_total_bps": 8000,
+                            "last_utilization_percent": 6.4,
+                            "last_headroom_bytes_per_sec": 124992000,
+                            "updated_at": "2026-04-17T12:20:00+00:00",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             stack.enter_context(patch.object(collector, "get_server_status", return_value=server_status))
             stack.enter_context(patch.object(collector, "load_server_info", return_value=server_info))
 
@@ -230,11 +288,13 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
             web_json_path = base_dir / "data" / "web" / "dashboard.json"
             html_path = base_dir / "data" / "web" / "index.html"
             report_path = base_dir / "data" / "reports" / "current_users.csv"
+            report_md_path = base_dir / "data" / "reports" / "current_users.md"
 
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
             web_summary = json.loads(web_json_path.read_text(encoding="utf-8"))
             html = html_path.read_text(encoding="utf-8")
             report = report_path.read_text(encoding="utf-8")
+            report_md = report_md_path.read_text(encoding="utf-8")
 
         self.assertEqual(result, 0)
         self.assertEqual(summary["vpn"]["total_peers"], 1)
@@ -242,11 +302,15 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertGreater(summary["vpn"]["current_total_bps"], 0)
         self.assertEqual(summary["peers"][0]["current_share_percent"], 100.0)
         self.assertIn("bandwidth", summary["server"])
+        self.assertIn("daily", summary["server"]["bandwidth"])
+        self.assertEqual(summary["server"]["bandwidth"]["daily"]["peak_current_total_bps"], 8000)
+        self.assertAlmostEqual(summary["server"]["bandwidth"]["daily"]["average_current_total_bps"], 3350.33, places=2)
         self.assertEqual(summary["warnings"], [])
         self.assertEqual(web_summary["vpn"]["listen_port"], 47895)
         self.assertIn("Панель Amnezia VPN", html)
         self.assertIn("current_share_percent", report)
         self.assertIn("vpn_ip", report)
+        self.assertIn("Пик потока за день:", report_md)
 
     def test_status_prints_cached_summary(self) -> None:
         summary = {
@@ -285,6 +349,16 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
                     "utilization_percent": 0.0,
                     "headroom_bytes_per_sec": 124996928,
                     "over_capacity_bytes_per_sec": 0,
+                    "daily": {
+                        "sample_count": 7,
+                        "average_current_total_bps": 4096.0,
+                        "peak_current_total_bps": 8192,
+                        "peak_utilization_percent": 0.01,
+                        "peak_at": "2026-04-17T11:55:00+00:00",
+                        "last_current_total_bps": 3072,
+                        "last_utilization_percent": 0.0,
+                        "last_headroom_bytes_per_sec": 124996928,
+                    },
                 },
             },
             "server_info": {"notes": []},
@@ -319,6 +393,8 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertIn("Контейнер: amnezia-awg2 [running]", output)
         self.assertIn("VPN: AmneziaWG / awg0 port=47895 peers=2 active=1 window=60s flow=", output)
         self.assertIn("Bandwidth: current=", output)
+        self.assertIn("avg_day=4.00 KiB/s", output)
+        self.assertIn("peak_day=8.00 KiB/s", output)
         self.assertIn("Warnings: 1", output)
         self.assertIn("Peer A", output)
 
