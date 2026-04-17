@@ -13,6 +13,7 @@ import socket
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.request import Request, urlopen
+import ctypes
 
 try:
     import tkinter as tk
@@ -37,6 +38,7 @@ DEFAULT_REMOTE_PORT = 18080
 DEFAULT_HOST = "46.8.254.243"
 DEFAULT_SSH_USER = "root"
 REQUEST_TIMEOUT_SECONDS = 3.0
+_SINGLE_INSTANCE_MUTEX_NAME = "Global\\AutostopVPNShell"
 
 
 def _coerce_int(value: object, default: int = 0) -> int:
@@ -87,6 +89,23 @@ def _test_local_port(port: int) -> bool:
             return True
     except OSError:
         return False
+
+
+def _acquire_single_instance_lock() -> Optional[ctypes.c_void_p]:
+    if os.name != "nt":
+        return None
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.CreateMutexW(None, True, _SINGLE_INSTANCE_MUTEX_NAME)
+    if not handle:
+        raise ctypes.WinError()
+
+    last_error = kernel32.GetLastError()
+    if last_error in (5, 183):  # ERROR_ACCESS_DENIED / ERROR_ALREADY_EXISTS
+        kernel32.CloseHandle(handle)
+        return None
+
+    return ctypes.c_void_p(handle)
 
 
 def _resolve_ssh_executable() -> str:
@@ -688,6 +707,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         raise SystemExit("tkinter is required for the Autostop VPN shell")
 
     args = parse_args(argv)
+    instance_lock = _acquire_single_instance_lock()
+    if os.name == "nt" and instance_lock is None:
+        return 0
     root = tk.Tk()
     ShellApp(
         root,
@@ -698,7 +720,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         remote_port=args.remote_port,
         refresh_seconds=args.refresh_seconds,
     )
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        if instance_lock is not None:
+            ctypes.windll.kernel32.CloseHandle(instance_lock)  # type: ignore[attr-defined]
     return 0
 
 
