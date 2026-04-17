@@ -1,9 +1,9 @@
 [Unit]
-Description=Run Amnezia VPN traffic collector every 20 seconds
+Description=Run Amnezia VPN traffic collector every 10 seconds
 
 [Timer]
-OnBootSec=20s
-OnUnitActiveSec=20s
+OnBootSec=10s
+OnUnitActiveSec=10s
 AccuracySec=2s
 Persistent=true
 

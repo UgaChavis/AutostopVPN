@@ -94,6 +94,7 @@ The collector reads these environment variables:
 5. If the provider cap is known, set `bandwidth_limit_mbps`; otherwise the collector will fall back to the default network interface speed when available.
 6. Run one manual collector execution.
 7. Reload `systemd`, restart the collector timer, enable the localhost dashboard service and verify `127.0.0.1:18080`.
+8. The collector timer refreshes every 10 seconds to keep the shell snapshot fresh without making the server noisy.
 8. Open the shell app from Windows; the SSH tunnel is handled inside the app.
 
 ## Rollback
@@ -103,7 +104,7 @@ The collector reads these environment variables:
 3. Restore the previous systemd unit files.
 4. Restore `/var/lib/amnezia-traffic` from backup if needed.
 5. Run `systemctl daemon-reload`.
-6. Restart `amnezia-traffic-collector.timer`.
+6. Restart `amnezia-traffic-collector.timer`. The timer is expected to run every 10 seconds in the current setup.
 
 Rollback does not touch the VPN container itself.
 

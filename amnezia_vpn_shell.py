@@ -38,7 +38,7 @@ DEFAULT_REMOTE_PORT = 18080
 DEFAULT_HOST = "46.8.254.243"
 DEFAULT_SSH_USER = "root"
 REQUEST_TIMEOUT_SECONDS = 3.0
-_SINGLE_INSTANCE_MUTEX_NAME = "Global\\AutostopVPNShell"
+_SINGLE_INSTANCE_MUTEX_NAME = "AutostopVPNShell"
 
 
 def _coerce_int(value: object, default: int = 0) -> int:

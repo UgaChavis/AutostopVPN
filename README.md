@@ -123,7 +123,7 @@ Open the shell UI locally through SSH:
 ```
 
 The launcher checks `autostopvpn_server_ed25519` first and falls back to `autostopcrm_server_ed25519` if the local key is not present. It then opens the native shell window without a second console or browser window.
-The shell keeps refreshing the live snapshot while it is open, and the collector timer on the server now runs every 20 seconds by default.
+The shell keeps refreshing the live snapshot while it is open, and the collector timer on the server now runs every 10 seconds by default.
 
 Inspect the latest cached state:
 
