@@ -88,7 +88,7 @@ The collector writes into `amnezia_traffic_collector.py`'s data directory:
 - `totals.json`: accumulated totals per peer
 - `summary.json`: current dashboard snapshot
 - `summary.json` includes `server.bandwidth` with channel load and headroom
-- the dashboard server renders the latest `summary.json` on each request for the native shell app
+- the dashboard server serves the latest `summary.json` on each request; the shell app reads it over the SSH tunnel
 - `daily/YYYY-MM-DD.json`: day-level counters
 - `reports/current_users.csv`: peer report
 - `reports/current_users.md`: peer report in markdown
