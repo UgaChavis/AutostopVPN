@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
+import queue
 import shutil
 import sys
 import threading
 import time
 import subprocess
 import socket
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.request import Request, urlopen
@@ -32,13 +36,66 @@ for candidate in (SCRIPT_DIR, SCRIPT_DIR / "scripts"):
 import amnezia_traffic_collector as collector
 
 
-DEFAULT_REFRESH_SECONDS = 5
+DEFAULT_REFRESH_SECONDS = 1.0
 DEFAULT_LOCAL_PORT = 18765
 DEFAULT_REMOTE_PORT = 18080
 DEFAULT_HOST = "46.8.254.243"
 DEFAULT_SSH_USER = "root"
 REQUEST_TIMEOUT_SECONDS = 3.0
 _SINGLE_INSTANCE_MUTEX_NAME = "AutostopVPNShell"
+_MAIN_WINDOW_TITLE_PREFIX = "Autostop VPN Shell"
+_ENDPOINT_LOCATION_CACHE: Dict[str, str] = {}
+_SSH_CONNECT_TIMEOUT_SECONDS = 5
+_SSH_TUNNEL_WAIT_SECONDS = 10.0
+_DEBUG_LOG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AutostopVPN" / "shell_errors.log"
+_SSH_LOG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AutostopVPN" / "ssh_tunnel.log"
+APP_BG = "#06090d"
+PANEL_BG = "#0b1116"
+PANEL_ALT_BG = "#0e151b"
+BORDER_BG = "#1c2831"
+TEXT_PRIMARY = "#dfe9de"
+TEXT_MUTED = "#7d9099"
+ACCENT = "#36e08f"
+ACCENT_SOFT = "#123425"
+ACCENT_2 = "#48bfff"
+STATUS_BG = "#0d1419"
+STATUS_TEXT = "#96a6b0"
+WARN_BG = "#1d1214"
+WARN_TEXT = "#ff9b9b"
+ERROR_BG = "#2a1214"
+ERROR_TEXT = "#ff9b9b"
+ROW_ACTIVE_BG = "#0f1913"
+ROW_INACTIVE_BG = "#0c1014"
+ROW_SELECTED_BG = "#163424"
+INPUT_BG = "#0c1218"
+
+
+def _state_badge_colors(state_class: str) -> tuple[str, str]:
+    if state_class == "danger":
+        return ERROR_BG, ERROR_TEXT
+    if state_class == "warn":
+        return "#2b200f", WARN_TEXT
+    if state_class == "ok":
+        return ACCENT_SOFT, ACCENT
+    return "#141c23", "#a6b7c2"
+
+
+def _append_debug_log(message: str) -> None:
+    try:
+        _DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
+    except Exception:  # pragma: no cover - logging should never break the UI
+        pass
+
+
+def _append_ssh_log(message: str) -> None:
+    try:
+        _SSH_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _SSH_LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now(timezone.utc).isoformat()} {message}\n")
+    except Exception:  # pragma: no cover - logging should never break the UI
+        pass
 
 
 def _coerce_int(value: object, default: int = 0) -> int:
@@ -83,6 +140,86 @@ def _format_snapshot_age(updated_at: object) -> str:
     return collector.format_age(age_seconds)
 
 
+def _split_endpoint(endpoint: object) -> str:
+    value = str(endpoint or "").strip()
+    if not value:
+        return ""
+    if value.startswith("[") and "]:" in value:
+        return value[1 : value.index("]")]
+    if value.count(":") == 1:
+        return value.split(":", 1)[0]
+    return value
+
+
+def _format_endpoint_location(endpoint: object) -> str:
+    host = _split_endpoint(endpoint)
+    if not host:
+        return "нет endpoint"
+    cached = _ENDPOINT_LOCATION_CACHE.get(host)
+    if cached:
+        return cached
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        label = host
+    else:
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_multicast or address.is_reserved:
+            label = "локальная сеть"
+        else:
+            label = host
+
+    _ENDPOINT_LOCATION_CACHE[host] = label
+    return label
+
+
+def _normalize_query(value: object) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+def _peer_matches_filter(peer: Dict[str, object], query: str, active_only: bool) -> bool:
+    if active_only and not bool(peer.get("active_value")):
+        return False
+    if not query:
+        return True
+    haystack = " ".join(
+        [
+            str(peer.get("name", "")),
+            str(peer.get("vpn_ip", "")),
+            str(peer.get("endpoint", "")),
+            str(peer.get("endpoint_location", "")),
+            str(peer.get("public_key_short", "")),
+        ]
+    )
+    return query in _normalize_query(haystack)
+
+
+def _peer_detail_note(peer: Dict[str, object]) -> str:
+    if not peer:
+        return "Выберите пир в таблице, чтобы увидеть детали."
+    if peer.get("active_value"):
+        if _coerce_float(peer.get("current_bps")) >= 1024 * 1024:
+            return "Активный и заметно грузит канал."
+        return "Активный пир, трафик идет прямо сейчас."
+    age = peer.get("handshake_age_seconds")
+    if age is None:
+        return "Неактивный пир без свежего handshake."
+    if _coerce_int(age) >= 900:
+        return "Давно не выходил на связь."
+    return "Пир пока неактивен, но недавно был виден."
+
+
+def _show_widget(widget: object) -> None:
+    grid = getattr(widget, "grid", None)
+    if callable(grid):
+        grid()
+
+
+def _hide_widget(widget: object) -> None:
+    grid_remove = getattr(widget, "grid_remove", None)
+    if callable(grid_remove):
+        grid_remove()
+
 def _test_local_port(port: int) -> bool:
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=0.7):
@@ -108,6 +245,32 @@ def _acquire_single_instance_lock() -> Optional[ctypes.c_void_p]:
     return ctypes.c_void_p(handle)
 
 
+def _focus_existing_window() -> bool:
+    if os.name != "nt":
+        return False
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+
+    def _enum_callback(hwnd: int, lparam: int) -> bool:
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buffer, length + 1)
+        title = buffer.value
+        if not title.startswith(_MAIN_WINDOW_TITLE_PREFIX):
+            return True
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        user32.BringWindowToTop(hwnd)
+        return False
+
+    enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)(_enum_callback)
+    return bool(user32.EnumWindows(enum_proc, 0))
+
+
 def _resolve_ssh_executable() -> str:
     for candidate in ("ssh.exe", "ssh"):
         command = shutil.which(candidate)
@@ -123,14 +286,28 @@ def _resolve_key_path(explicit_key_path: str = "") -> str:
             return str(candidate)
         raise FileNotFoundError(f"SSH key not found: {candidate}")
 
+    for env_name in ("AUTOSTOPVPN_SSH_KEY", "AUTOSTOPCRM_SSH_KEY"):
+        env_value = os.environ.get(env_name, "").strip()
+        if env_value:
+            candidate = Path(env_value)
+            if candidate.exists():
+                return str(candidate)
+
     candidates = [
         Path.home() / ".ssh" / "autostopvpn_server_ed25519",
         Path.home() / ".ssh" / "autostopcrm_server_ed25519",
+        Path.home() / ".ssh" / "codex_autostopvpn",
+        Path.home() / ".ssh" / "codex_autostopcrm",
+        Path.home() / ".ssh" / "codex_autostopcrm_key",
     ]
     for candidate in candidates:
         if candidate.exists():
             return str(candidate)
-    raise FileNotFoundError("SSH key not found. Checked autostopvpn_server_ed25519 and autostopcrm_server_ed25519.")
+    raise FileNotFoundError(
+        "SSH key not found. Checked AUTOSTOPVPN_SSH_KEY, AUTOSTOPCRM_SSH_KEY, "
+        "autostopvpn_server_ed25519, autostopcrm_server_ed25519, codex_autostopvpn, "
+        "codex_autostopcrm, and codex_autostopcrm_key."
+    )
 
 
 def _start_ssh_tunnel(host: str, user: str, key_path: str, local_port: int, remote_port: int) -> subprocess.Popen[str]:
@@ -141,8 +318,7 @@ def _start_ssh_tunnel(host: str, user: str, key_path: str, local_port: int, remo
     if os.name == "nt":
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    return subprocess.Popen(
-        [
+    args = [
             ssh_executable,
             "-i",
             key_path,
@@ -151,18 +327,30 @@ def _start_ssh_tunnel(host: str, user: str, key_path: str, local_port: int, remo
             "-o",
             "ExitOnForwardFailure=yes",
             "-o",
+            f"ConnectTimeout={_SSH_CONNECT_TIMEOUT_SECONDS}",
+            "-o",
+            "ConnectionAttempts=1",
+            "-o",
             "ServerAliveInterval=30",
             "-o",
             "ServerAliveCountMax=3",
+            "-o",
+            "LogLevel=ERROR",
             "-o",
             "StrictHostKeyChecking=accept-new",
             "-N",
             "-L",
             tunnel_spec,
             f"{user}@{host}",
-        ],
+        ]
+    _append_ssh_log("starting tunnel: " + " ".join(args))
+    log_handle = _SSH_LOG_PATH.open("a", encoding="utf-8")
+    log_handle.write(f"{datetime.now(timezone.utc).isoformat()} command started\n")
+    log_handle.flush()
+    return subprocess.Popen(
+        args,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=log_handle,
         stdin=subprocess.DEVNULL,
         creationflags=creationflags,
         startupinfo=startupinfo,
@@ -179,11 +367,12 @@ def fetch_summary(url: str, timeout: float = REQUEST_TIMEOUT_SECONDS) -> Dict[st
     return summary
 
 
-def build_view_model(summary: Dict[str, object], source_url: str, refresh_seconds: int) -> Dict[str, object]:
+def build_view_model(summary: Dict[str, object], source_url: str, refresh_seconds: float) -> Dict[str, object]:
     container = summary.get("container", {}) if isinstance(summary.get("container", {}), dict) else {}
     vpn = summary.get("vpn", {}) if isinstance(summary.get("vpn", {}), dict) else {}
     server = summary.get("server", {}) if isinstance(summary.get("server", {}), dict) else {}
     bandwidth = server.get("bandwidth", {}) if isinstance(server.get("bandwidth", {}), dict) else {}
+    transport = server.get("transport", {}) if isinstance(server.get("transport", {}), dict) else {}
     daily = bandwidth.get("daily", {}) if isinstance(bandwidth.get("daily", {}), dict) else {}
     loadavg = server.get("loadavg", {}) if isinstance(server.get("loadavg", {}), dict) else {}
     memory = server.get("memory", {}) if isinstance(server.get("memory", {}), dict) else {}
@@ -193,7 +382,16 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
 
     capacity_bps = _coerce_int(bandwidth.get("capacity_bytes_per_sec"))
     current_total_bps = _coerce_int(vpn.get("current_total_bps"))
+    current_rx_bps = _coerce_int(vpn.get("current_rx_bps"))
+    current_tx_bps = _coerce_int(vpn.get("current_tx_bps"))
     utilization_percent = bandwidth.get("utilization_percent")
+    estimated_path_mtu = _coerce_int(transport.get("estimated_path_mtu"))
+    path_mtu_label = f"{estimated_path_mtu} B" if estimated_path_mtu else "н/д"
+    path_mtu_note = "DF ping probe" if transport else "н/д"
+    interface_mtu = _coerce_int(transport.get("interface_mtu"))
+    interface_mtu_label = f"{interface_mtu} B" if interface_mtu else "н/д"
+    recommended_mtu = _coerce_int(transport.get("recommended_interface_mtu"))
+    recommended_mtu_label = f"{recommended_mtu} B" if recommended_mtu else "н/д"
     bandwidth_state = collector.describe_bandwidth_state(
         capacity_bps,
         _coerce_float(utilization_percent) if utilization_percent is not None else None,
@@ -206,10 +404,18 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
             continue
         current_bps = _coerce_int(peer.get("current_total_bps"))
         total_bytes = _coerce_int(peer.get("total_bytes"))
+        endpoint = str(peer.get("endpoint", "") or "")
+        endpoint_location = str(peer.get("endpoint_location") or "")
+        if not endpoint_location:
+            endpoint_location = _format_endpoint_location(endpoint)
         peer_rows.append(
             {
                 "name": str(peer.get("name", "")),
                 "vpn_ip": str(peer.get("vpn_ip", "")),
+                "endpoint": endpoint,
+                "endpoint_location": endpoint_location,
+                "public_key": str(peer.get("public_key", "")),
+                "public_key_short": str(peer.get("public_key_short", "")),
                 "active": "да" if bool(peer.get("is_active")) else "нет",
                 "active_value": bool(peer.get("is_active")),
                 "handshake": collector.format_age(peer.get("handshake_age_seconds")),
@@ -221,6 +427,11 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
                 "today_bytes": _coerce_int(peer.get("today_bytes")),
                 "total": collector.format_bytes(total_bytes),
                 "total_bytes": total_bytes,
+                "path_mtu": path_mtu_label,
+                "path_mtu_note": path_mtu_note,
+                "interface_mtu": interface_mtu_label,
+                "interface_mtu_note": "awg0 inside container" if interface_mtu else "н/д",
+                "recommended_mtu": recommended_mtu_label,
             }
         )
 
@@ -238,10 +449,9 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
         collector.format_rate(_coerce_int(bandwidth.get("headroom_bytes_per_sec"))) if capacity_bps else "н/д"
     )
     bandwidth_utilization = collector.format_percent(utilization_percent if utilization_percent is not None else None)
-
     return {
         "source_url": source_url,
-        "refresh_seconds": refresh_seconds,
+        "refresh_seconds": max(float(refresh_seconds), 0.5),
         "updated_label": collector.format_timestamp(summary.get("updated_at")),
         "age_label": _format_snapshot_age(summary.get("updated_at")),
         "container_label": f"{container.get('name', '')} [{collector.translate_container_status(str(container.get('status', '')))}]",
@@ -253,7 +463,11 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
         "current_rx": collector.format_rate(_coerce_int(vpn.get("current_rx_bps"))),
         "current_tx": collector.format_rate(_coerce_int(vpn.get("current_tx_bps"))),
         "current_total": collector.format_rate(current_total_bps),
+        "current_rx_bps": current_rx_bps,
+        "current_tx_bps": current_tx_bps,
         "current_total_bps": current_total_bps,
+        "bandwidth_limit_bps": capacity_bps,
+        "bandwidth_utilization_value": _coerce_float(utilization_percent) if utilization_percent is not None else 0.0,
         "bandwidth_limit": bandwidth_limit,
         "bandwidth_utilization": bandwidth_utilization,
         "bandwidth_headroom": bandwidth_headroom,
@@ -261,6 +475,11 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
         "bandwidth_state_label": bandwidth_state["label"],
         "bandwidth_state_note": bandwidth_state["note"],
         "bandwidth_bar_width_percent": float(bandwidth_state["bar_width_percent"]),
+        "path_mtu": path_mtu_label,
+        "path_mtu_note": path_mtu_note,
+        "interface_mtu": interface_mtu_label,
+        "interface_mtu_note": "awg0 inside container" if interface_mtu else "н/д",
+        "recommended_mtu": recommended_mtu_label,
         "daily_average": collector.format_rate(_coerce_float(daily.get("average_current_total_bps"))),
         "daily_peak": collector.format_rate(_coerce_float(daily.get("peak_current_total_bps"))),
         "daily_peak_utilization": collector.format_percent(daily.get("peak_utilization_percent")),
@@ -291,7 +510,7 @@ class ShellApp:
         key_path: str,
         local_port: int,
         remote_port: int,
-        refresh_seconds: int,
+        refresh_seconds: float,
         dashboard_url: Optional[str] = None,
     ) -> None:
         self.root = root
@@ -301,25 +520,57 @@ class ShellApp:
         self.local_port = local_port
         self.remote_port = remote_port
         self.dashboard_url = dashboard_url or f"http://127.0.0.1:{local_port}/dashboard.json"
-        self.refresh_seconds = max(refresh_seconds, 1)
-        self.refresh_ms = self.refresh_seconds * 1000
+        self.refresh_seconds = max(float(refresh_seconds), 0.5)
+        self.refresh_ms = max(int(self.refresh_seconds * 1000), 500)
         self._refresh_after_id: Optional[str] = None
+        self._refresh_result_after_id: Optional[str] = None
         self._refresh_in_flight = False
         self._closed = False
         self._last_model: Optional[Dict[str, object]] = None
+        self._last_snapshot_label: Optional[str] = None
         self._ssh_process: Optional[subprocess.Popen[bytes]] = None
+        self._refresh_results: "queue.Queue[tuple[str, object]]" = queue.Queue()
+        self._traffic_history: List[float] = []
+        self._traffic_history_limit = 36
+        self._all_peer_rows: List[Dict[str, object]] = []
+        self._filtered_peer_rows: List[Dict[str, object]] = []
+        self._peer_rows_by_key: Dict[str, Dict[str, object]] = {}
+        self._selected_peer_key: Optional[str] = None
+        self._search_query = tk.StringVar(master=self.root, value="")
+        self._active_only = tk.BooleanVar(master=self.root, value=False)
+        self._card_value_labels: Dict[str, tk.Label] = {}
+        self._card_note_labels: Dict[str, tk.Label] = {}
+        self._detail_value_labels: Dict[str, tk.Label] = {}
+        self._detail_header_label: Optional[tk.Label] = None
+        self._detail_subtitle_label: Optional[tk.Label] = None
+        self._detail_note_label: Optional[tk.Label] = None
+        self._trend_canvas: Optional[tk.Canvas] = None
+        self._trend_value_label: Optional[tk.Label] = None
+        self._trend_phase = 0
+        self._status_indicator_canvas: Optional[tk.Canvas] = None
+        self._status_indicator_dot: Optional[int] = None
+        self._status_blink_job: Optional[str] = None
+        self._status_blink_on = False
+        self._status_mode = "offline"
+        self._suppress_tree_select_event = False
 
-        self.root.title("Autostop VPN Shell")
-        self.root.geometry("1200x780")
-        self.root.minsize(1080, 680)
+        self.root.title("Autostop VPN Control")
+        self.root.geometry("1760x960")
+        self.root.minsize(1560, 880)
+        self.root.configure(background=APP_BG)
 
         self._build_styles()
         self._build_layout()
+        self._schedule_status_indicator_tick()
+        self._search_query.trace_add("write", lambda *_args: self._apply_peer_filter())
+        self._active_only.trace_add("write", lambda *_args: self._apply_peer_filter())
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.bind_all("<F5>", self._on_refresh_key)
         self.root.bind_all("<Control-r>", self._on_refresh_key)
         self.root.bind_all("<Control-R>", self._on_refresh_key)
+        self.root.report_callback_exception = self._report_callback_exception
 
+        self._schedule_refresh_result_poll()
         self.request_refresh()
 
     def _build_styles(self) -> None:
@@ -328,168 +579,713 @@ class ShellApp:
             style.theme_use("clam")
         except tk.TclError:  # pragma: no cover - theme availability varies
             pass
-        style.configure("Shell.TFrame", background="#f6f6f2")
-        style.configure("Shell.TLabel", background="#f6f6f2", foreground="#111111", font=("Consolas", 10))
-        style.configure("ShellTitle.TLabel", background="#f6f6f2", foreground="#111111", font=("Consolas", 15, "bold"))
-        style.configure("ShellSection.TLabelframe", background="#f6f6f2", foreground="#111111")
-        style.configure("ShellSection.TLabelframe.Label", background="#f6f6f2", foreground="#111111", font=("Consolas", 10, "bold"))
-        style.configure("ShellValue.TLabel", background="#f6f6f2", foreground="#111111", font=("Consolas", 11, "bold"))
-        style.configure("ShellSmall.TLabel", background="#f6f6f2", foreground="#444444", font=("Consolas", 9))
-        style.configure("Shell.Treeview", font=("Consolas", 9), rowheight=22)
-        style.configure("Shell.Treeview.Heading", font=("Consolas", 9, "bold"))
+        style.configure("Shell.TFrame", background=APP_BG)
+        style.configure("Shell.TLabel", background=APP_BG, foreground=TEXT_PRIMARY, font=("Consolas", 10))
+        style.configure("ShellTitle.TLabel", background=PANEL_BG, foreground=TEXT_PRIMARY, font=("Consolas", 19, "bold"))
+        style.configure("ShellSection.TLabelframe", background=PANEL_BG, foreground=TEXT_PRIMARY)
+        style.configure(
+            "ShellSection.TLabelframe.Label",
+            background=PANEL_BG,
+            foreground=TEXT_PRIMARY,
+            font=("Consolas", 9, "bold"),
+        )
+        style.configure("ShellValue.TLabel", background=PANEL_BG, foreground=TEXT_PRIMARY, font=("Consolas", 11, "bold"))
+        style.configure("ShellSmall.TLabel", background=PANEL_BG, foreground=TEXT_MUTED, font=("Consolas", 9))
+        style.configure(
+            "Shell.Treeview",
+            font=("Consolas", 9),
+            rowheight=25,
+            background=PANEL_BG,
+            fieldbackground=PANEL_BG,
+            foreground=TEXT_PRIMARY,
+            borderwidth=0,
+        )
+        style.configure(
+            "Shell.Treeview.Heading",
+            font=("Consolas", 9, "bold"),
+            background=PANEL_ALT_BG,
+            foreground=ACCENT,
+            relief="flat",
+        )
+        style.map(
+            "Shell.Treeview",
+            background=[("selected", ROW_SELECTED_BG)],
+            foreground=[("selected", TEXT_PRIMARY)],
+        )
 
     def _build_layout(self) -> None:
         root = self.root
-        root.configure(background="#f6f6f2")
-
-        container = ttk.Frame(root, style="Shell.TFrame", padding=12)
-        container.grid(row=0, column=0, sticky="nsew")
+        root.configure(background=APP_BG)
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
+
+        container = tk.Frame(root, bg=APP_BG, padx=14, pady=14)
+        container.grid(row=0, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
         container.rowconfigure(4, weight=1)
 
-        header = ttk.Frame(container, style="Shell.TFrame")
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-
-        ttk.Label(header, text="Autostop VPN Shell", style="ShellTitle.TLabel").grid(row=0, column=0, sticky="w")
-        self.state_label = ttk.Label(header, text="Ожидание данных...", style="ShellValue.TLabel")
-        self.state_label.grid(row=0, column=1, sticky="e")
-        self.substate_label = ttk.Label(header, text="", style="ShellSmall.TLabel")
-        self.substate_label.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-
-        controls = ttk.Frame(container, style="Shell.TFrame")
-        controls.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-        controls.columnconfigure(0, weight=1)
-        self.updated_label = ttk.Label(controls, text="", style="ShellSmall.TLabel")
-        self.updated_label.grid(row=0, column=0, sticky="w")
-        refresh_button = ttk.Button(controls, text="Обновить", command=self.request_refresh)
-        refresh_button.grid(row=0, column=1, sticky="e", padx=(8, 0))
-        close_button = ttk.Button(controls, text="Закрыть", command=self.close)
-        close_button.grid(row=0, column=2, sticky="e", padx=(8, 0))
-
-        metrics = ttk.Frame(container, style="Shell.TFrame")
-        metrics.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        metrics.columnconfigure(0, weight=1)
-        metrics.columnconfigure(1, weight=1)
-        metrics.columnconfigure(2, weight=1)
-
-        self.channel_box = self._create_channel_box(metrics)
-        self.channel_box.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        self.vpn_box = self._create_vpn_box(metrics)
-        self.vpn_box.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
-        self.server_box = self._create_server_box(metrics)
-        self.server_box.grid(row=0, column=2, sticky="nsew")
-
-        warning_frame = ttk.LabelFrame(container, text="Предупреждения", style="ShellSection.TLabelframe", padding=10)
-        warning_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        warning_frame.columnconfigure(0, weight=1)
-        self.warning_text = tk.Text(
-            warning_frame,
-            height=4,
-            wrap="word",
-            borderwidth=0,
-            background="#f6f6f2",
-            foreground="#111111",
-            font=("Consolas", 9),
-            relief="flat",
+        hero = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=16, pady=8)
+        hero.grid(row=0, column=0, sticky="ew")
+        hero.columnconfigure(0, weight=1)
+        hero.columnconfigure(1, weight=0)
+        tk.Label(hero, text="AUTOSTOP VPN CONTROL", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 18, "bold")).grid(
+            row=0, column=0, sticky="w"
         )
-        self.warning_text.grid(row=0, column=0, sticky="ew")
-        self.warning_text.configure(state="disabled")
+        self.updated_label = tk.Label(
+            hero,
+            text="ssh tunnel / live peer telemetry / bandwidth monitor • waiting for snapshot",
+            bg=PANEL_BG,
+            fg=TEXT_MUTED,
+            font=("Consolas", 8),
+            wraplength=1160,
+            justify="left",
+            anchor="w",
+        )
+        self.updated_label.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        status_panel = tk.Frame(hero, bg=PANEL_BG)
+        status_panel.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(16, 0))
+        status_top = tk.Frame(status_panel, bg=PANEL_BG)
+        status_top.grid(row=0, column=0, sticky="e")
+        self._status_indicator_canvas = tk.Canvas(
+            status_top,
+            width=16,
+            height=16,
+            bg=PANEL_BG,
+            highlightthickness=0,
+            bd=0,
+        )
+        self._status_indicator_canvas.pack(side="left", padx=(0, 6))
+        self._status_indicator_dot = self._status_indicator_canvas.create_oval(3, 3, 13, 13, fill=ACCENT, outline=ACCENT)
+        self.state_label = tk.Label(
+            status_top,
+            text="WAITING",
+            bg=ACCENT_SOFT,
+            fg=ACCENT,
+            font=("Consolas", 9, "bold"),
+            padx=10,
+            pady=4,
+        )
+        self.state_label.pack(side="left")
+        status_actions = tk.Frame(status_panel, bg=PANEL_BG)
+        status_actions.grid(row=1, column=0, sticky="e", pady=(8, 0))
+        tk.Button(
+            status_actions,
+            text="ОБНОВИТЬ",
+            command=self.request_refresh,
+            bg=PANEL_ALT_BG,
+            fg=TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            activebackground=ACCENT_SOFT,
+            activeforeground=ACCENT,
+            highlightthickness=1,
+            highlightbackground=BORDER_BG,
+            highlightcolor=ACCENT,
+            font=("Consolas", 9, "bold"),
+            padx=10,
+            pady=3,
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            status_actions,
+            text="ЗАКРЫТЬ",
+            command=self.close,
+            bg=PANEL_ALT_BG,
+            fg=TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            activebackground=ERROR_BG,
+            activeforeground=ERROR_TEXT,
+            highlightthickness=1,
+            highlightbackground=BORDER_BG,
+            highlightcolor=ERROR_TEXT,
+            font=("Consolas", 9, "bold"),
+            padx=10,
+            pady=3,
+        ).pack(side="left")
 
-        peers_frame = ttk.LabelFrame(container, text="Пиры", style="ShellSection.TLabelframe", padding=10)
-        peers_frame.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
-        peers_frame.columnconfigure(0, weight=1)
-        peers_frame.rowconfigure(0, weight=1)
+        cards = tk.Frame(container, bg=APP_BG)
+        cards.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        for idx in range(4):
+            cards.columnconfigure(idx, weight=1, uniform="cards")
+        self._card_frames: Dict[str, tk.Frame] = {}
+        self._card_value_labels.clear()
+        self._card_note_labels.clear()
+        card_specs = [
+            ("channel", "КАНАЛ", ACCENT),
+            ("peers", "ПИРЫ", ACCENT_2),
+            ("leader", "ЛИДЕР", "#f4b860"),
+            ("snapshot", "СНИМОК", "#9b7cff"),
+        ]
+        for idx, (key, title, accent) in enumerate(card_specs):
+            card, value_label, note_label = self._create_metric_card(cards, title, accent)
+            card.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
+            self._card_frames[key] = card
+            self._card_value_labels[key] = value_label
+            self._card_note_labels[key] = note_label
 
-        columns = ("name", "vpn_ip", "active", "current", "share", "today", "total", "handshake")
-        self.peer_tree = ttk.Treeview(peers_frame, columns=columns, show="headings", style="Shell.Treeview")
+        trend_card = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=8)
+        trend_card.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        trend_card.columnconfigure(0, weight=1)
+        trend_card.columnconfigure(1, weight=0)
+        trend_header = tk.Frame(trend_card, bg=PANEL_BG)
+        trend_header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        trend_header.columnconfigure(0, weight=1)
+        tk.Label(trend_header, text="ГРАФИК НАГРУЗКИ", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 12, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
+        self._trend_value_label = tk.Label(trend_header, text="—", bg=PANEL_BG, fg=ACCENT, font=("Consolas", 10, "bold"))
+        self._trend_value_label.grid(row=0, column=1, sticky="e")
+        self._trend_canvas = tk.Canvas(
+            trend_card,
+            height=110,
+            bg=INPUT_BG,
+            highlightthickness=1,
+            highlightbackground=BORDER_BG,
+            bd=0,
+        )
+        self._trend_canvas.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+
+        filter_bar = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=8)
+        filter_bar.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        filter_bar.columnconfigure(1, weight=1)
+        tk.Label(filter_bar, text="ПОИСК", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9, "bold")).grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        search_entry = tk.Entry(
+            filter_bar,
+            textvariable=self._search_query,
+            relief="flat",
+            bd=0,
+            bg=INPUT_BG,
+            fg=TEXT_PRIMARY,
+            insertbackground=TEXT_PRIMARY,
+            highlightthickness=1,
+            highlightbackground=BORDER_BG,
+            highlightcolor=ACCENT,
+            font=("Consolas", 10),
+        )
+        search_entry.grid(row=0, column=1, sticky="ew")
+        search_entry.insert(0, "")
+        tk.Checkbutton(
+            filter_bar,
+            text="ТОЛЬКО АКТИВНЫЕ",
+            variable=self._active_only,
+            bg=PANEL_BG,
+            fg=TEXT_PRIMARY,
+            activebackground=PANEL_BG,
+            activeforeground=TEXT_PRIMARY,
+            selectcolor=PANEL_BG,
+            font=("Consolas", 9),
+        ).grid(row=0, column=2, sticky="w", padx=(12, 0))
+        tk.Button(
+            filter_bar,
+            text="СБРОСИТЬ",
+            command=self._reset_filters,
+            bg=PANEL_ALT_BG,
+            fg=TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            activebackground=ACCENT_SOFT,
+            activeforeground=ACCENT,
+            highlightthickness=1,
+            highlightbackground=BORDER_BG,
+            highlightcolor=ACCENT,
+            font=("Consolas", 9, "bold"),
+            padx=10,
+            pady=4,
+        ).grid(row=0, column=3, sticky="e", padx=(12, 0))
+        self.visible_count_label = tk.Label(filter_bar, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9))
+        self.visible_count_label.grid(row=0, column=4, sticky="e", padx=(12, 0))
+
+        main = tk.Frame(container, bg=APP_BG)
+        main.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
+        main.columnconfigure(0, weight=4)
+        main.columnconfigure(1, weight=1)
+        main.rowconfigure(0, weight=1)
+
+        left = tk.Frame(main, bg=APP_BG)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left.rowconfigure(0, weight=1)
+        left.columnconfigure(0, weight=1)
+
+        table_card = tk.Frame(left, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=12)
+        table_card.grid(row=0, column=0, sticky="nsew")
+        table_card.columnconfigure(0, weight=1)
+        table_card.rowconfigure(1, weight=1)
+        table_header = tk.Frame(table_card, bg=PANEL_BG)
+        table_header.grid(row=0, column=0, sticky="ew")
+        table_header.columnconfigure(0, weight=1)
+        tk.Label(table_header, text="ПИРЫ", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 12, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.table_status_label = tk.Label(table_header, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9))
+        self.table_status_label.grid(row=0, column=1, sticky="e")
+
+        columns = ("name", "location", "active", "current", "share", "today", "total", "handshake")
+        self.peer_tree = ttk.Treeview(table_card, columns=columns, show="headings", style="Shell.Treeview", selectmode="browse")
         headings = {
-            "name": "Имя",
-            "vpn_ip": "VPN IP",
-            "active": "Активен",
-            "current": "Текущая",
-            "share": "Доля",
-            "today": "Сегодня",
-            "total": "Всего",
+            "name": "ИМЯ",
+            "location": "ЛОКАЦИЯ",
+            "active": "LIVE",
+            "current": "ПОТОК",
+            "share": "ДОЛЯ",
+            "today": "СЕГОДНЯ",
+            "total": "ВСЕГО",
             "handshake": "Handshake",
         }
         widths = {
-            "name": 180,
-            "vpn_ip": 110,
-            "active": 70,
-            "current": 120,
-            "share": 80,
+            "name": 190,
+            "location": 240,
+            "active": 72,
+            "current": 130,
+            "share": 88,
             "today": 120,
             "total": 120,
-            "handshake": 100,
+            "handshake": 110,
         }
         for column in columns:
             self.peer_tree.heading(column, text=headings[column])
-            self.peer_tree.column(column, width=widths[column], anchor="w", stretch=column in {"name", "current", "today", "total"})
-        peer_scroll = ttk.Scrollbar(peers_frame, orient="vertical", command=self.peer_tree.yview)
+            self.peer_tree.column(column, width=widths[column], anchor="w", stretch=column in {"name", "current", "today", "total", "location"})
+        self.peer_tree.tag_configure("active", background=ROW_ACTIVE_BG)
+        self.peer_tree.tag_configure("inactive", background=ROW_INACTIVE_BG)
+        self.peer_tree.bind("<<TreeviewSelect>>", self._on_peer_tree_select)
+        peer_scroll = ttk.Scrollbar(table_card, orient="vertical", command=self.peer_tree.yview)
         self.peer_tree.configure(yscrollcommand=peer_scroll.set)
-        self.peer_tree.grid(row=0, column=0, sticky="nsew")
-        peer_scroll.grid(row=0, column=1, sticky="ns")
+        self.peer_tree.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        peer_scroll.grid(row=1, column=1, sticky="ns", pady=(10, 0))
 
-        footer = ttk.Frame(container, style="Shell.TFrame")
-        footer.grid(row=5, column=0, sticky="ew", pady=(10, 0))
-        footer.columnconfigure(0, weight=1)
-        self.footer_label = ttk.Label(footer, text="", style="ShellSmall.TLabel")
+        right = tk.Frame(main, bg=APP_BG)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.rowconfigure(0, weight=1)
+        right.columnconfigure(0, weight=1)
+
+        detail_card = tk.Frame(right, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=10)
+        detail_card.grid(row=0, column=0, sticky="nsew")
+        detail_card.columnconfigure(0, weight=1)
+        tk.Label(detail_card, text="ВЫБРАННЫЙ ПИР", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 12, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
+        self._detail_header_label = tk.Label(
+            detail_card,
+            text="ВЫБЕРИТЕ СТРОКУ В ТАБЛИЦЕ",
+            bg=PANEL_BG,
+            fg=TEXT_PRIMARY,
+            font=("Consolas", 16, "bold"),
+            wraplength=360,
+            justify="left",
+            anchor="w",
+        )
+        self._detail_header_label.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self._detail_subtitle_label = tk.Label(
+            detail_card,
+            text="здесь будет показана локация, endpoint, трафик и MTU выбранного пира.",
+            bg=PANEL_BG,
+            fg=TEXT_MUTED,
+            font=("Consolas", 9),
+            wraplength=360,
+            justify="left",
+            anchor="w",
+        )
+        self._detail_subtitle_label.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+        self._detail_note_label = tk.Label(
+            detail_card,
+            text="",
+            bg=ACCENT_SOFT,
+            fg=ACCENT,
+            font=("Consolas", 9, "bold"),
+            wraplength=360,
+            justify="left",
+            anchor="w",
+            padx=10,
+            pady=8,
+        )
+        self._detail_note_label.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+
+        details_grid = tk.Frame(detail_card, bg=PANEL_BG)
+        details_grid.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+        details_grid.columnconfigure(1, weight=1)
+        detail_rows = [
+            ("location", "ЛОКАЦИЯ"),
+            ("endpoint", "ENDPOINT"),
+            ("path_mtu", "PMTU"),
+            ("interface_mtu", "MTU AWG0"),
+            ("recommended_mtu", "MTU TARGET"),
+            ("vpn_ip", "VPN IP"),
+            ("active", "АКТИВЕН"),
+            ("handshake", "HANDSHAKE"),
+            ("current", "ПОТОК"),
+            ("share", "ДОЛЯ"),
+            ("today", "СЕГОДНЯ"),
+            ("total", "ВСЕГО"),
+            ("public_key_short", "КЛЮЧ"),
+        ]
+        for row_index, (key, title) in enumerate(detail_rows):
+            label = tk.Label(details_grid, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9, "bold"), anchor="w")
+            label.grid(row=row_index, column=0, sticky="w", pady=3)
+            value = tk.Label(
+                details_grid,
+                text="—",
+                bg=PANEL_BG,
+                fg=TEXT_PRIMARY,
+                font=("Consolas", 9),
+                wraplength=340,
+                justify="left",
+                anchor="w",
+            )
+            value.grid(row=row_index, column=1, sticky="ew", pady=3, padx=(10, 0))
+            self._detail_value_labels[key] = value
+
+        footer_row = tk.Frame(container, bg=APP_BG)
+        footer_row.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        footer_row.columnconfigure(0, weight=1)
+        self.footer_label = tk.Label(footer_row, text="", bg=APP_BG, fg=TEXT_MUTED, font=("Consolas", 9))
         self.footer_label.grid(row=0, column=0, sticky="w")
-        self.connection_label = ttk.Label(footer, text="", style="ShellSmall.TLabel")
+        self.connection_label = tk.Label(footer_row, text="", bg=APP_BG, fg=TEXT_MUTED, font=("Consolas", 9))
         self.connection_label.grid(row=0, column=1, sticky="e")
 
-    def _create_channel_box(self, parent: ttk.Frame) -> ttk.LabelFrame:
-        frame = ttk.LabelFrame(parent, text="Канал", style="ShellSection.TLabelframe", padding=10)
-        frame.columnconfigure(0, weight=1)
-        self.channel_current_label = ttk.Label(frame, text="", style="ShellValue.TLabel")
-        self.channel_current_label.grid(row=0, column=0, sticky="w")
-        self.channel_info_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.channel_info_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self.channel_state_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.channel_state_label.grid(row=2, column=0, sticky="w", pady=(2, 0))
-        self.channel_bar = tk.Canvas(
-            frame,
-            height=24,
-            background="#f6f6f2",
-            highlightthickness=0,
-            borderwidth=0,
+    def _create_metric_card(self, parent: tk.Frame, title: str, accent_color: str) -> tuple[tk.Frame, tk.Label, tk.Label]:
+        card = tk.Frame(parent, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1)
+        accent = tk.Frame(card, bg=accent_color, width=5)
+        accent.pack(side="left", fill="y")
+        body = tk.Frame(card, bg=PANEL_BG, padx=12, pady=10)
+        body.pack(side="left", fill="both", expand=True)
+        tk.Label(body, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 8, "bold")).pack(anchor="w")
+        value_label = tk.Label(body, text="—", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 14, "bold"))
+        value_label.pack(anchor="w", pady=(4, 0))
+        note_label = tk.Label(body, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9), wraplength=280, justify="left")
+        note_label.pack(anchor="w", pady=(4, 0))
+        return card, value_label, note_label
+
+    def _set_status_mode(self, mode: str) -> None:
+        self._status_mode = mode
+        if mode == "online":
+            self.state_label.configure(text="ONLINE", bg=ACCENT_SOFT, fg=ACCENT)
+        elif mode == "connecting":
+            self.state_label.configure(text="CONNECT", bg="#2a1c08", fg="#f4b860")
+        else:
+            self.state_label.configure(text="OFFLINE", bg=ERROR_BG, fg=ERROR_TEXT)
+
+    def _refresh_status_indicator(self) -> None:
+        canvas = getattr(self, "_status_indicator_canvas", None)
+        dot = getattr(self, "_status_indicator_dot", None)
+        if canvas is None or dot is None:
+            return
+        mode = getattr(self, "_status_mode", "offline")
+        if mode == "online":
+            fill = ACCENT if self._status_blink_on else "#0d2016"
+            outline = ACCENT
+        elif mode == "connecting":
+            fill = "#f4b860"
+            outline = "#f4b860"
+        else:
+            fill = ERROR_TEXT
+            outline = ERROR_TEXT
+        canvas.itemconfigure(dot, fill=fill, outline=outline)
+
+    def _schedule_status_indicator_tick(self) -> None:
+        if self._closed:
+            return
+        if getattr(self, "_status_mode", "offline") == "online":
+            self._status_blink_on = not self._status_blink_on
+        else:
+            self._status_blink_on = False
+        self._refresh_status_indicator()
+        if self._status_blink_job is not None:
+            try:
+                self.root.after_cancel(self._status_blink_job)
+            except Exception:
+                pass
+        self._status_blink_job = self.root.after(500, self._schedule_status_indicator_tick)
+
+    def _render_trend_graph(self, model: Dict[str, object]) -> None:
+        canvas = getattr(self, "_trend_canvas", None)
+        if canvas is None:
+            return
+
+        current_bps = _coerce_float(model.get("current_total_bps"))
+        rx_bps = _coerce_float(model.get("current_rx_bps"))
+        tx_bps = _coerce_float(model.get("current_tx_bps"))
+        capacity_bps = _coerce_float(model.get("bandwidth_limit_bps"))
+        utilization_value = model.get("bandwidth_utilization_value")
+        utilization = _coerce_float(utilization_value) if utilization_value is not None else (
+            (current_bps / capacity_bps * 100.0) if capacity_bps > 0 else 0.0
         )
-        self.channel_bar.grid(row=3, column=0, sticky="ew", pady=(8, 0))
-        self.channel_bar.bind("<Configure>", self._redraw_channel_bar)
-        self.channel_day_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.channel_day_label.grid(row=4, column=0, sticky="w", pady=(6, 0))
-        return frame
 
-    def _create_vpn_box(self, parent: ttk.Frame) -> ttk.LabelFrame:
-        frame = ttk.LabelFrame(parent, text="VPN", style="ShellSection.TLabelframe", padding=10)
-        frame.columnconfigure(0, weight=1)
-        self.vpn_summary_label = ttk.Label(frame, text="", style="ShellValue.TLabel")
-        self.vpn_summary_label.grid(row=0, column=0, sticky="w")
-        self.vpn_flow_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.vpn_flow_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self.vpn_container_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.vpn_container_label.grid(row=2, column=0, sticky="w", pady=(2, 0))
-        self.vpn_image_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.vpn_image_label.grid(row=3, column=0, sticky="w", pady=(2, 0))
-        return frame
+        if current_bps > 0:
+            history = list(getattr(self, "_traffic_history", []))
+            history.append(current_bps)
+            history_limit = max(int(getattr(self, "_traffic_history_limit", 36)), 1)
+            history = history[-history_limit:]
+            self._traffic_history = history
+        else:
+            history = list(getattr(self, "_traffic_history", []))
+            if not history:
+                history = [0.0]
+            self._traffic_history = history
 
-    def _create_server_box(self, parent: ttk.Frame) -> ttk.LabelFrame:
-        frame = ttk.LabelFrame(parent, text="Сервер", style="ShellSection.TLabelframe", padding=10)
-        frame.columnconfigure(0, weight=1)
-        self.server_load_label = ttk.Label(frame, text="", style="ShellValue.TLabel")
-        self.server_load_label.grid(row=0, column=0, sticky="w")
-        self.server_memory_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.server_memory_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
-        self.server_disk_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.server_disk_label.grid(row=2, column=0, sticky="w", pady=(2, 0))
-        self.server_ping_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.server_ping_label.grid(row=3, column=0, sticky="w", pady=(2, 0))
-        self.server_uptime_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
-        self.server_uptime_label.grid(row=4, column=0, sticky="w", pady=(2, 0))
-        return frame
+        history_max = max(self._traffic_history) if self._traffic_history else 1.0
+        if capacity_bps > history_max:
+            history_max = capacity_bps
+        history_max = max(history_max, 1.0)
+
+        canvas.delete("all")
+        width = max(int(canvas.winfo_width() or 0), 1)
+        height = max(int(canvas.winfo_height() or 0), 1)
+        inner_pad = 10
+        plot_width = max(width - inner_pad * 2, 1)
+        plot_height = max(height - inner_pad * 2, 1)
+        self._trend_phase = (self._trend_phase + 2) % max(plot_width, 1)
+
+        # titles and live readouts
+        canvas.create_text(inner_pad, inner_pad + 2, anchor="nw", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text="ВХОДЯЩИЙ")
+        canvas.create_text(width // 2, inner_pad + 2, anchor="n", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text="ИСХОДЯЩИЙ")
+        canvas.create_text(width - inner_pad, inner_pad + 2, anchor="ne", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text="СУММА / ЛИМИТ")
+
+        def _draw_metric_bar(y_top: int, label: str, value_bps: float, limit_bps: float, fill_color: str, outline: str) -> None:
+            label_width = 146
+            value_width = 122
+            bar_left = inner_pad + label_width
+            bar_right = width - inner_pad - value_width
+            bar_width = max(bar_right - bar_left, 1)
+            ratio = value_bps / limit_bps if limit_bps > 0 else 0.0
+            fill = max(0.0, min(ratio, 1.0))
+            canvas.create_rectangle(bar_left, y_top, bar_right, y_top + 14, outline=outline, fill="#0a1015")
+            canvas.create_rectangle(bar_left, y_top, bar_left + int(bar_width * fill), y_top + 14, outline="", fill=fill_color)
+            canvas.create_text(inner_pad, y_top + 7, anchor="w", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text=label)
+            canvas.create_text(width - inner_pad, y_top + 7, anchor="e", fill=TEXT_PRIMARY, font=("Consolas", 8), text=collector.format_rate(value_bps))
+
+        rx_color = "#48bfff" if rx_bps < capacity_bps * 0.6 else ACCENT
+        tx_color = "#36e08f" if tx_bps < capacity_bps * 0.6 else "#7cf2b6"
+        total_color = ACCENT if utilization < 80 else (STATUS_TEXT if utilization < 95 else ERROR_TEXT)
+
+        _draw_metric_bar(
+            inner_pad + 18,
+            "Входящий поток",
+            rx_bps,
+            capacity_bps if capacity_bps > 0 else max(rx_bps, 1.0),
+            rx_color,
+            BORDER_BG,
+        )
+        _draw_metric_bar(
+            inner_pad + 40,
+            "Исходящий поток",
+            tx_bps,
+            capacity_bps if capacity_bps > 0 else max(tx_bps, 1.0),
+            tx_color,
+            BORDER_BG,
+        )
+
+        # capacity bar
+        bar_fill = max(0.0, min(utilization / 100.0, 1.0))
+        bar_top = inner_pad + 66
+        bar_bottom = inner_pad + 80
+        canvas.create_rectangle(inner_pad, bar_top, width - inner_pad, bar_bottom, outline=BORDER_BG, fill="#0a1015")
+        canvas.create_rectangle(
+            inner_pad,
+            bar_top,
+            inner_pad + int(plot_width * bar_fill),
+            bar_bottom,
+            outline="",
+            fill=total_color,
+        )
+        canvas.create_text(
+            width - inner_pad,
+            bar_top + 7,
+            anchor="e",
+            fill=TEXT_MUTED,
+            font=("Consolas", 8, "bold"),
+            text=f"Суммарно {collector.format_rate(current_bps)} / лимит {collector.format_rate(capacity_bps)}",
+        )
+
+        # sparkline
+        spark_top = inner_pad + 90
+        spark_bottom = height - inner_pad
+        spark_height = max(spark_bottom - spark_top, 1)
+        spark_width = max(plot_width, 1)
+        if len(self._traffic_history) == 1:
+            value = self._traffic_history[0]
+            fill_height = int(spark_height * (value / history_max))
+            canvas.create_rectangle(
+                inner_pad,
+                spark_bottom - fill_height,
+                width - inner_pad,
+                spark_bottom,
+                outline="",
+                fill="#123425",
+            )
+        else:
+            points = []
+            count = len(self._traffic_history)
+            for idx, value in enumerate(self._traffic_history):
+                x = inner_pad + int((spark_width * idx) / max(count - 1, 1))
+                y = spark_bottom - int((value / history_max) * spark_height)
+                points.extend([x, y])
+            if len(points) >= 4:
+                canvas.create_line(*points, fill=ACCENT, width=2, smooth=True)
+
+        if self._traffic_history:
+            cursor_x = inner_pad + self._trend_phase
+            cursor_x = min(max(cursor_x, inner_pad), width - inner_pad)
+            canvas.create_line(cursor_x, spark_top, cursor_x, spark_bottom, fill="#2a3942", width=1, dash=(3, 4))
+            latest = self._traffic_history[-1]
+            latest_y = spark_bottom - int((latest / history_max) * spark_height)
+            canvas.create_oval(cursor_x - 3, latest_y - 3, cursor_x + 3, latest_y + 3, outline="", fill=ACCENT)
+
+        trend_value_label = getattr(self, "_trend_value_label", None)
+        if trend_value_label is not None:
+            trend_value_label.configure(text=f"СУММА {collector.format_rate(current_bps)} | ЗАГРУЗКА {utilization:.1f}%")
+    def _reset_filters(self) -> None:
+        self._search_query.set("")
+        self._active_only.set(False)
+
+    def _update_metric_cards(self, model: Dict[str, object]) -> None:
+        current_total = str(model.get("current_total", "—"))
+        bandwidth_limit = str(model.get("bandwidth_limit", "—"))
+        bandwidth_utilization = str(model.get("bandwidth_utilization", "н/д"))
+        bandwidth_headroom = str(model.get("bandwidth_headroom", "н/д"))
+        active_connections = _coerce_int(model.get("active_connections"))
+        total_peers = _coerce_int(model.get("total_peers"))
+        peer_rows = list(self._all_peer_rows)
+        visible_count = len(self._filtered_peer_rows)
+        top_peer = peer_rows[0] if peer_rows else {}
+        updated_label = str(model.get("updated_label", "—"))
+        age_label = str(model.get("age_label", "н/д"))
+        refresh_seconds = _coerce_float(model.get("refresh_seconds"))
+
+        self._card_value_labels["channel"].configure(text=f"{current_total} / {bandwidth_limit}")
+        self._card_note_labels["channel"].configure(
+            text=f"UTIL {bandwidth_utilization} | HEADROOM {bandwidth_headroom}"
+        )
+
+        self._card_value_labels["peers"].configure(text=f"{active_connections} / {total_peers}")
+        self._card_note_labels["peers"].configure(text=f"VISIBLE {visible_count} | FILTER {self._search_query.get() or 'ALL'}")
+
+        leader_name = str(top_peer.get("name", "—")) if top_peer else "—"
+        leader_rate = str(top_peer.get("current", "—")) if top_peer else "—"
+        leader_share = str(top_peer.get("share", "—")) if top_peer else "—"
+        leader_location = str(top_peer.get("endpoint_location", ""))
+        self._card_value_labels["leader"].configure(text=leader_name if leader_name else "—")
+        leader_note_parts = [part for part in (leader_location, leader_rate, leader_share) if part]
+        self._card_note_labels["leader"].configure(text=" | ".join(leader_note_parts))
+
+        self._card_value_labels["snapshot"].configure(text=updated_label)
+        self._card_note_labels["snapshot"].configure(text=f"AGE {age_label} | STEP {refresh_seconds:g}s")
+        self._render_trend_graph(model)
+
+    def _apply_peer_filter(self) -> None:
+        query = _normalize_query(self._search_query.get())
+        active_only = bool(self._active_only.get())
+        self._filtered_peer_rows = [
+            peer for peer in self._all_peer_rows if _peer_matches_filter(peer, query, active_only)
+        ]
+        self._populate_peers(self._filtered_peer_rows)
+        self._update_peer_counts()
+
+    def _update_peer_counts(self) -> None:
+        total = len(self._all_peer_rows)
+        visible = len(self._filtered_peer_rows)
+        active = sum(1 for peer in self._all_peer_rows if bool(peer.get("active_value")))
+        query = _normalize_query(self._search_query.get())
+        mode_parts = []
+        if query:
+            mode_parts.append(f"поиск: {query}")
+        if bool(self._active_only.get()):
+            mode_parts.append("только активные")
+        mode_text = f" | {'; '.join(mode_parts)}" if mode_parts else ""
+        self.visible_count_label.configure(text=f"ПОКАЗАНО {visible}/{total} | АКТИВНЫХ {active}{mode_text}")
+        self.table_status_label.configure(text=f"{visible} ROWS")
+        if not self._selected_peer_key and self._filtered_peer_rows:
+            self._select_peer(self._filtered_peer_rows[0].get("public_key", ""))
+        elif self._selected_peer_key and self._selected_peer_key not in {str(peer.get("public_key", "")) for peer in self._filtered_peer_rows}:
+            if self._filtered_peer_rows:
+                self._select_peer(self._filtered_peer_rows[0].get("public_key", ""))
+            else:
+                self._select_peer(None)
+        else:
+            self._render_peer_details(self._peer_rows_by_key.get(self._selected_peer_key or "", {}))
+
+    def _select_peer(self, public_key: Optional[str]) -> None:
+        next_key = str(public_key) if public_key else None
+        current_selection = self.peer_tree.selection()
+        if next_key == self._selected_peer_key and (
+            not next_key or (len(current_selection) == 1 and current_selection[0] == next_key)
+        ):
+            self._render_peer_details(self._peer_rows_by_key.get(self._selected_peer_key or "", {}))
+            return
+
+        self._selected_peer_key = next_key
+        if not self._selected_peer_key:
+            self._suppress_tree_select_event = True
+            try:
+                self.peer_tree.selection_remove(self.peer_tree.selection())
+            finally:
+                self._suppress_tree_select_event = False
+            self._render_peer_details({})
+            return
+        if self.peer_tree.exists(self._selected_peer_key):
+            self._suppress_tree_select_event = True
+            try:
+                self.peer_tree.selection_set(self._selected_peer_key)
+                self.peer_tree.see(self._selected_peer_key)
+            finally:
+                self._suppress_tree_select_event = False
+        self._render_peer_details(self._peer_rows_by_key.get(self._selected_peer_key, {}))
+
+    def _on_peer_tree_select(self, _event: object = None) -> None:
+        if self._suppress_tree_select_event:
+            return
+        selection = self.peer_tree.selection()
+        if not selection or selection[0] == self._selected_peer_key:
+            return
+        self._select_peer(selection[0])
+
+    def _render_peer_details(self, peer: Dict[str, object]) -> None:
+        if not peer:
+            self._detail_header_label.configure(text="ВЫБЕРИТЕ СТРОКУ В ТАБЛИЦЕ")
+            self._detail_subtitle_label.configure(text="здесь будет показана локация, endpoint, трафик и MTU выбранного пира.")
+            self._detail_note_label.configure(text="")
+            for value_label in self._detail_value_labels.values():
+                value_label.configure(text="—")
+            return
+
+        name = str(peer.get("name", ""))
+        location = str(peer.get("endpoint_location", "")) or "нет данных"
+        endpoint = str(peer.get("endpoint", "")) or "нет endpoint"
+        path_mtu = str(peer.get("path_mtu", "н/д"))
+        path_mtu_note = str(peer.get("path_mtu_note", ""))
+        if path_mtu_note:
+            path_mtu = f"{path_mtu} ({path_mtu_note})"
+        interface_mtu = str(peer.get("interface_mtu", "н/д"))
+        interface_mtu_note = str(peer.get("interface_mtu_note", ""))
+        if interface_mtu_note:
+            interface_mtu = f"{interface_mtu} ({interface_mtu_note})"
+        recommended_mtu = str(peer.get("recommended_mtu", "н/д"))
+        vpn_ip = str(peer.get("vpn_ip", "")) or "нет VPN IP"
+        active = "да" if bool(peer.get("active_value")) else "нет"
+        handshake = str(peer.get("handshake", "н/д"))
+        current = str(peer.get("current", "—"))
+        share = str(peer.get("share", "—"))
+        today = str(peer.get("today", "—"))
+        total = str(peer.get("total", "—"))
+        public_key_short = str(peer.get("public_key_short", "")) or "—"
+        note = _peer_detail_note(peer)
+
+        self._detail_header_label.configure(text=name or "БЕЗ ИМЕНИ")
+        self._detail_subtitle_label.configure(text=f"{location} | {endpoint}")
+        self._detail_note_label.configure(text=note)
+        self._detail_value_labels["location"].configure(text=location)
+        self._detail_value_labels["endpoint"].configure(text=endpoint)
+        self._detail_value_labels["path_mtu"].configure(text=path_mtu)
+        self._detail_value_labels["interface_mtu"].configure(text=interface_mtu)
+        self._detail_value_labels["recommended_mtu"].configure(text=recommended_mtu)
+        self._detail_value_labels["vpn_ip"].configure(text=vpn_ip)
+        self._detail_value_labels["active"].configure(text=active)
+        self._detail_value_labels["handshake"].configure(text=handshake)
+        self._detail_value_labels["current"].configure(text=current)
+        self._detail_value_labels["share"].configure(text=share)
+        self._detail_value_labels["today"].configure(text=today)
+        self._detail_value_labels["total"].configure(text=total)
+        self._detail_value_labels["public_key_short"].configure(text=public_key_short)
 
     def _on_refresh_key(self, _event: object) -> str:
         self.request_refresh()
@@ -513,6 +1309,34 @@ class ShellApp:
         self._refresh_after_id = None
         self.request_refresh()
 
+    def _cancel_refresh_result_poll(self) -> None:
+        if self._refresh_result_after_id is not None:
+            try:
+                self.root.after_cancel(self._refresh_result_after_id)
+            except tk.TclError:  # pragma: no cover - shutdown edge case
+                pass
+            self._refresh_result_after_id = None
+
+    def _schedule_refresh_result_poll(self) -> None:
+        if self._closed or self._refresh_result_after_id is not None:
+            return
+        self._refresh_result_after_id = self.root.after(100, self._poll_refresh_results)
+
+    def _poll_refresh_results(self) -> None:
+        self._refresh_result_after_id = None
+        if self._closed:
+            return
+        while True:
+            try:
+                kind, payload = self._refresh_results.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "success":
+                self._handle_refresh_success(payload)  # type: ignore[arg-type]
+            else:
+                self._handle_refresh_error(payload)  # type: ignore[arg-type]
+        self._schedule_refresh_result_poll()
+
     def _port_in_use(self) -> bool:
         return _test_local_port(self.local_port)
 
@@ -525,23 +1349,50 @@ class ShellApp:
             self._ssh_process = None
         if self._ssh_process is None:
             self._ssh_process = _start_ssh_tunnel(self.host, self.ssh_user, self.key_path, self.local_port, self.remote_port)
-        for _ in range(40):
+        deadline = time.monotonic() + _SSH_TUNNEL_WAIT_SECONDS
+        while time.monotonic() < deadline:
             if self._closed:
                 return
             if self._port_in_use():
                 return
             if self._ssh_process is not None and self._ssh_process.poll() is not None:
-                raise RuntimeError(f"SSH tunnel exited with code {self._ssh_process.returncode}")
+                return_code = self._ssh_process.returncode
+                _append_ssh_log(f"tunnel exited with code {return_code}")
+                self._ssh_process = None
+                raise RuntimeError(f"SSH tunnel exited with code {return_code}")
             time.sleep(0.25)
+        if self._ssh_process is not None:
+            try:
+                self._ssh_process.terminate()
+                self._ssh_process.wait(timeout=1)
+            except Exception:  # pragma: no cover - best effort cleanup
+                pass
+            _append_ssh_log("tunnel timed out and was terminated")
+            self._ssh_process = None
         raise TimeoutError(f"Tunnel did not open on 127.0.0.1:{self.local_port}")
+
+    def _invalidate_tunnel(self) -> None:
+        if self._ssh_process is None:
+            return
+        try:
+            if self._ssh_process.poll() is None:
+                self._ssh_process.terminate()
+                try:
+                    self._ssh_process.wait(timeout=1)
+                except Exception:
+                    self._ssh_process.kill()
+        except Exception:  # pragma: no cover - best effort cleanup
+            pass
+        finally:
+            self._ssh_process = None
 
     def request_refresh(self) -> None:
         if self._closed or self._refresh_in_flight:
             return
         self._cancel_refresh_timer()
         self._refresh_in_flight = True
-        self.state_label.configure(text="Обновление...")
-        self.substate_label.configure(text="Запрос свежей статистики по SSH-туннелю.")
+        self._set_status_mode("connecting")
+        self.updated_label.configure(text="ssh tunnel / live peer telemetry / bandwidth monitor • проверка ssh-туннеля и загрузка snapshot...")
         threading.Thread(target=self._refresh_worker, daemon=True).start()
 
     def _refresh_worker(self) -> None:
@@ -550,85 +1401,140 @@ class ShellApp:
             summary = fetch_summary(self.dashboard_url)
             model = build_view_model(summary, self.dashboard_url, self.refresh_seconds)
         except Exception as exc:  # pragma: no cover - network and runtime dependent
-            self.root.after(0, lambda exc=exc: self._handle_refresh_error(exc))
+            _append_debug_log(f"refresh_worker error: {exc!r}")
+            _append_debug_log(traceback.format_exc())
+            self._invalidate_tunnel()
+            self._refresh_results.put(("error", exc))
             return
-        self.root.after(0, lambda model=model: self._handle_refresh_success(model))
+        self._refresh_results.put(("success", model))
 
     def _handle_refresh_success(self, model: Dict[str, object]) -> None:
         if self._closed:
             return
-        self._refresh_in_flight = False
-        self._last_model = model
+        try:
+            snapshot_label = str(model.get("updated_label", ""))
+            age_label = str(model.get("age_label", "н/д"))
+            refresh_seconds = _coerce_float(model.get("refresh_seconds"))
+            repeated_snapshot = self._last_model is not None and self._last_snapshot_label == snapshot_label
 
-        self.root.title(f"Autostop VPN Shell · {model['bandwidth_state_label']}")
-        self.state_label.configure(text=model["bandwidth_state_label"])
-        self.substate_label.configure(text=model["bandwidth_state_note"])
-        self.updated_label.configure(
-            text=f"Обновлено: {model['updated_label']} | Возраст: {model['age_label']} | Интервал: {model['refresh_seconds']} сек."
-        )
-        self.channel_current_label.configure(text=f"{model['current_total']} / {model['bandwidth_limit']}")
-        self.channel_info_label.configure(
-            text=f"Загрузка: {model['bandwidth_utilization']} | Запас: {model['bandwidth_headroom']}"
-        )
-        self.channel_state_label.configure(text=f"Статус канала: {model['bandwidth_state_label']}")
-        self._last_model = model
-        self._redraw_channel_bar()
-        self.channel_day_label.configure(
-            text=f"Средний поток за день: {model['daily_average']} | Пик за день: {model['daily_peak']} ({model['daily_peak_utilization']})"
-        )
+            self._refresh_in_flight = False
+            self._last_model = model
+            self._last_snapshot_label = snapshot_label
 
-        self.vpn_summary_label.configure(
-            text=f"{model['vpn_label']} | peers {model['active_connections']}/{model['total_peers']} | port {model['listen_port']}"
-        )
-        self.vpn_flow_label.configure(text=f"Текущий поток: RX {model['current_rx']} / TX {model['current_tx']}")
-        self.vpn_container_label.configure(text=f"Контейнер: {model['container_label']}")
-        self.vpn_image_label.configure(text=f"Image: {model['container_image']}")
+            if repeated_snapshot:
+                self.updated_label.configure(
+                    text=f"ssh tunnel / live peer telemetry / bandwidth monitor • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+                )
+                self._card_value_labels["snapshot"].configure(text=snapshot_label)
+                self._card_note_labels["snapshot"].configure(text=f"AGE {age_label} | STEP {refresh_seconds:g}s")
+                self._render_trend_graph(model)
+                self._set_warning_text(model.get("warnings", []))
+                self.connection_label.configure(text="LINK UP")
+                self._set_status_mode("online")
+                self._schedule_refresh()
+                return
 
-        self.server_load_label.configure(text=f"Loadavg: {model['server_load']}")
-        self.server_memory_label.configure(text=f"Memory: {model['server_memory']}")
-        self.server_disk_label.configure(text=f"Disk /: {model['server_disk']}")
-        self.server_ping_label.configure(text=f"Ping: {model['server_ping']}")
-        self.server_uptime_label.configure(text=f"Uptime: {model['server_uptime']}")
+            previous_selection = self._selected_peer_key
+            self._all_peer_rows = list(model.get("peer_rows", []))
+            self._peer_rows_by_key = {
+                str(peer.get("public_key", "")): peer for peer in self._all_peer_rows if str(peer.get("public_key", ""))
+            }
 
-        self._set_warning_text(model["warnings"])
-        self._populate_peers(model["peer_rows"])
-        self.footer_label.configure(text=f"Источник: {model['source_url']}")
-        self.connection_label.configure(text="Соединение активно")
-        self._schedule_refresh()
+            self.root.title(f"Autostop VPN Control :: {str(model['bandwidth_state_label']).upper()}")
+            self._set_status_mode("online")
+            self.updated_label.configure(
+                text=f"ssh tunnel / live peer telemetry / bandwidth monitor • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+            )
+            self._apply_peer_filter()
+            self._update_metric_cards(model)
+            self._set_warning_text(model["warnings"])
+            if previous_selection and previous_selection in self._peer_rows_by_key:
+                self._select_peer(previous_selection)
+            elif not self._filtered_peer_rows:
+                self._select_peer(None)
+            self.footer_label.configure(text=f"ИСТОЧНИК: {model['source_url']}")
+            self.connection_label.configure(text="LINK UP")
+            self._schedule_refresh()
+        except Exception as exc:
+            self._append_runtime_error("refresh_success", exc)
+            self._handle_refresh_error(exc)
 
     def _handle_refresh_error(self, exc: Exception) -> None:
         if self._closed:
             return
         self._refresh_in_flight = False
-        self.state_label.configure(text="Нет данных")
-        self.substate_label.configure(text=f"Не удалось обновить данные: {exc}")
-        self.connection_label.configure(text="Проблема с соединением")
+        self._set_status_mode("offline")
+        self.updated_label.configure(text=f"ssh tunnel / live peer telemetry / bandwidth monitor • Не удалось обновить данные: {exc}")
+        self.connection_label.configure(text="LINK DOWN")
         if self._last_model is None:
-            self.updated_label.configure(text="Обновлено: нет данных")
-            self.footer_label.configure(text=f"Источник: {self.dashboard_url}")
+            self.updated_label.configure(text="ssh tunnel / live peer telemetry / bandwidth monitor • SYNC нет данных")
+            self.footer_label.configure(text=f"ИСТОЧНИК: {self.dashboard_url}")
             self._set_warning_text([f"Ошибка загрузки: {exc}"])
+            self._all_peer_rows = []
+            self._filtered_peer_rows = []
+            self._peer_rows_by_key = {}
             self._populate_peers([])
+            self._update_metric_cards(
+                {
+                    "current_total": "н/д",
+                    "bandwidth_limit": "н/д",
+                    "bandwidth_utilization": "н/д",
+                    "bandwidth_headroom": "н/д",
+                    "active_connections": 0,
+                    "total_peers": 0,
+                    "updated_label": "—",
+                    "age_label": "н/д",
+                    "refresh_seconds": self.refresh_seconds,
+                }
+            )
+            self._render_peer_details({})
         self._schedule_refresh()
 
+    def _append_runtime_error(self, where: str, exc: Exception) -> None:
+        _append_debug_log(f"{where}: {exc!r}")
+        _append_debug_log(traceback.format_exc())
+
+    def _report_callback_exception(self, exc: type, value: BaseException, tb: object) -> None:
+        _append_debug_log(f"tk_callback: {exc.__name__}: {value!r}")
+        _append_debug_log("".join(traceback.format_exception(exc, value, tb)))
+        self._refresh_in_flight = False
+        try:
+            self._set_status_mode("offline")
+            self.updated_label.configure(text=f"ssh tunnel / live peer telemetry / bandwidth monitor • tk callback error: {value}")
+            self.connection_label.configure(text="LINK DOWN")
+        except Exception:
+            pass
+
     def _set_warning_text(self, warnings: List[str]) -> None:
-        self.warning_text.configure(state="normal")
-        self.warning_text.delete("1.0", "end")
+        status_label = getattr(self, "updated_label", None)
+        if status_label is None:
+            return
+        base_text = str(status_label.cget("text") or "").strip()
+        if not base_text:
+            base_text = "ssh tunnel / live peer telemetry / bandwidth monitor"
         if warnings:
-            self.warning_text.insert("end", "\n".join(f"• {item}" for item in warnings))
+            text = f"{base_text} • ПРЕДУПРЕЖДЕНИЯ: " + " | ".join(warnings[:2])
+            if len(warnings) > 2:
+                text += f" | +{len(warnings) - 2} еще"
+            status_label.configure(bg=WARN_BG, fg=WARN_TEXT)
         else:
-            self.warning_text.insert("end", "Предупреждений нет.")
-        self.warning_text.configure(state="disabled")
+            text = base_text
+            status_label.configure(bg=PANEL_BG, fg=TEXT_MUTED)
+        status_label.configure(text=text)
 
     def _populate_peers(self, rows: List[Dict[str, object]]) -> None:
         for item in self.peer_tree.get_children():
             self.peer_tree.delete(item)
         for row in rows:
+            tags = ("active",) if bool(row.get("active_value")) else ("inactive",)
             self.peer_tree.insert(
                 "",
                 "end",
+                iid=str(row.get("public_key", "")),
+                tags=tags,
                 values=(
                     row["name"],
-                    row["vpn_ip"],
+                    row["endpoint_location"],
                     row["active"],
                     row["current"],
                     row["share"],
@@ -637,56 +1543,26 @@ class ShellApp:
                     row["handshake"],
                 ),
             )
-
-    def _redraw_channel_bar(self, _event: object = None) -> None:
-        canvas = self.channel_bar
-        if canvas is None:
-            return
-        canvas.delete("all")
-        width = max(canvas.winfo_width(), 1)
-        height = max(canvas.winfo_height(), 1)
-        model = self._last_model
-        state_class = str(model.get("bandwidth_state_class", "muted")) if model else "muted"
-        utilization = _coerce_float(model.get("bandwidth_bar_width_percent")) if model else 0.0
-        current_total_bps = _coerce_int(model.get("current_total_bps")) if model else 0
-        fill_width = 0
-        if model and current_total_bps > 0:
-            fill_width = max(int(round(width * utilization / 100.0)), 6)
-            fill_width = min(fill_width, width)
-
-        colors = {
-            "ok": ("#dfeadf", "#2f7a36", "#18351d"),
-            "warn": ("#f2e1b8", "#9a6422", "#5b3a11"),
-            "danger": ("#f0c0c0", "#a33c3c", "#5f1717"),
-            "muted": ("#dcdcdc", "#8a8a8a", "#666666"),
-        }
-        track_color, fill_color, marker_color = colors.get(state_class, colors["muted"])
-
-        margin_y = 4
-        track_top = margin_y
-        track_bottom = height - margin_y
-        canvas.create_rectangle(0, track_top, width, track_bottom, fill=track_color, outline="#8b8b8b")
-        if fill_width > 0:
-            canvas.create_rectangle(0, track_top, fill_width, track_bottom, fill=fill_color, outline=fill_color)
-
-        for fraction in (0.25, 0.5, 0.75, 1.0):
-            tick_x = int(round(width * fraction))
-            canvas.create_line(tick_x, track_top, tick_x, track_bottom, fill="#ffffff", width=1)
-
-        marker_x = 0
-        if model and current_total_bps > 0 and width > 0:
-            marker_x = min(max(int(round(width * utilization / 100.0)), 1), width - 1)
-            canvas.create_line(marker_x, track_top - 2, marker_x, track_bottom + 2, fill=marker_color, width=2)
+        if rows:
+            self.table_status_label.configure(text=f"{len(rows)} ROWS")
+        else:
+            self.table_status_label.configure(text="0 ROWS")
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         self._cancel_refresh_timer()
+        self._cancel_refresh_result_poll()
         if self._ssh_process is not None and self._ssh_process.poll() is None:
             try:
                 self._ssh_process.terminate()
             except Exception:  # pragma: no cover - cleanup best effort
+                pass
+        if self._status_blink_job is not None:
+            try:
+                self.root.after_cancel(self._status_blink_job)
+            except Exception:
                 pass
         self.root.destroy()
 
@@ -698,7 +1574,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--key-path", default="", help="SSH private key path")
     parser.add_argument("--local-port", type=int, default=DEFAULT_LOCAL_PORT, help="Local tunnel port")
     parser.add_argument("--remote-port", type=int, default=DEFAULT_REMOTE_PORT, help="Remote dashboard port")
-    parser.add_argument("--refresh-seconds", type=int, default=DEFAULT_REFRESH_SECONDS, help="Auto-refresh interval")
+    parser.add_argument("--refresh-seconds", type=float, default=DEFAULT_REFRESH_SECONDS, help="Auto-refresh interval in seconds")
     return parser.parse_args(argv)
 
 
@@ -709,6 +1585,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
     instance_lock = _acquire_single_instance_lock()
     if os.name == "nt" and instance_lock is None:
+        _focus_existing_window()
         return 0
     root = tk.Tk()
     ShellApp(

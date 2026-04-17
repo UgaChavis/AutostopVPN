@@ -4,20 +4,21 @@ Autostop VPN is the isolated local working copy for the VPN monitoring subsystem
 
 The production copy of the same files is mirrored into the main `AutostopCRM` repository. This repo is the place to make VPN-only changes without mixing them with CRM work.
 
-For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md).
+For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). For access notes and external documentation, read [ACCESS_AND_DOCS.md](ACCESS_AND_DOCS.md).
 
 ## What This Project Does
 
 - collects WireGuard peer traffic from the live Amnezia container
 - calculates current, daily, and lifetime traffic per peer
 - tracks active peers from handshake age
+- shows peer rows with approximate city/country based on each peer's public endpoint
 - captures server health signals: load, memory, disk, uptime, ping
 - estimates current channel utilization, daily average load, day peak, and per-peer share of the live flow
 - shows a top-of-page traffic banner with channel load, limit, headroom, and risk state
 - renders JSON and text reports and keeps a lightweight HTML fallback view for diagnostics
 - serves the latest snapshot on the server side and exposes it to the desktop shell as JSON
 - opens a native Windows shell window with the SSH tunnel hidden inside the app
-- supports a local installation into `%LOCALAPPDATA%\AutostopVPN` with a desktop shortcut
+- supports a local installation into `%LOCALAPPDATA%\AutostopVPN` with a desktop shortcut and custom icon
 
 ## Repository Layout
 
@@ -31,8 +32,9 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md).
 - [open_amnezia_dashboard.ps1](open_amnezia_dashboard.ps1): PowerShell launcher for the native shell app
 - [open_amnezia_dashboard.cmd](open_amnezia_dashboard.cmd): cmd wrapper for the PowerShell launcher
 - [start_autostopvpn.ps1](start_autostopvpn.ps1): stable desktop entrypoint for the installed app
-- [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut
+- [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut with a generated shield icon
 - [remove_autostopvpn.ps1](remove_autostopvpn.ps1): remove the local install and desktop shortcut
+- [apply_telegram_mtu_fix.ps1](apply_telegram_mtu_fix.ps1): apply the server-side MTU helper and sync the dashboard metadata
 - [LOCAL_INSTALL.md](LOCAL_INSTALL.md): local install and shortcut instructions
 - [AMNEZIA_VPN_MONITORING.md](AMNEZIA_VPN_MONITORING.md): deployment and rollback runbook
 - [tests/test_amnezia_traffic_collector.py](tests/test_amnezia_traffic_collector.py): unit tests for the collector logic
@@ -64,6 +66,8 @@ Environment variables with defaults:
 - `AMNEZIA_PING_TARGET=1.1.1.1`
 - `AMNEZIA_ACTIVE_WINDOW_SECONDS=180`
 - `AMNEZIA_PING_COUNT=3`
+- `AMNEZIA_MTU_PROBE=1`
+- `AMNEZIA_MTU_TARGET=1.1.1.1`
 
 Important `amnezia_server_info.json` fields:
 
@@ -76,9 +80,12 @@ Important `amnezia_server_info.json` fields:
 - `vpn_container`: container name
 - `network_interface`: optional interface for bandwidth auto-detection
 - `bandwidth_limit_mbps`: optional provider or plan limit in Mbps
+- `wireguard_mtu`: optional target MTU for the VPN tunnel if you want the dashboard to compare it against the live probe
 - `notes`: dashboard notes shown to the operator
 
 If `bandwidth_limit_mbps` is empty, the collector falls back to the speed of the detected default network interface.
+If `wireguard_mtu` is set, the collector can compare it to the live `awg0` MTU and the probed path MTU.
+The current recommended value is `1380`.
 
 ## Generated Data
 
@@ -122,7 +129,7 @@ Open the shell UI locally through SSH:
 .\open_amnezia_dashboard.ps1
 ```
 
-The launcher checks `autostopvpn_server_ed25519` first and falls back to `autostopcrm_server_ed25519` if the local key is not present. It then opens the native shell window without a second console or browser window.
+The launcher checks `AUTOSTOPVPN_SSH_KEY` and `AUTOSTOPCRM_SSH_KEY` first, then falls back to `autostopvpn_server_ed25519`, `autostopcrm_server_ed25519`, `codex_autostopvpn`, `codex_autostopcrm`, and `codex_autostopcrm_key` in `~/.ssh`. It then opens the native shell window without a second console or browser window.
 The shell keeps refreshing the live snapshot while it is open, and the collector timer on the server now runs every 10 seconds by default.
 
 Inspect the latest cached state:
@@ -156,7 +163,7 @@ For the Windows desktop workflow, install the project into the user system folde
 .\install_autostopvpn.ps1
 ```
 
-That copies the current repo to `%LOCALAPPDATA%\AutostopVPN` and creates `Autostop VPN.lnk` on the desktop.
+That copies the current repo to `%LOCALAPPDATA%\AutostopVPN`, generates `AutostopVPN.ico`, and creates `Autostop VPN.lnk` on the desktop.
 
 Use the shortcut or run:
 

@@ -103,6 +103,7 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertEqual(row["today_tx_bytes"], 500)
         self.assertEqual(row["total_rx_bytes"], 1200)
         self.assertEqual(row["total_tx_bytes"], 2500)
+        self.assertEqual(row["endpoint_location"], "локальная сеть")
         self.assertAlmostEqual(row["current_rx_bps"], 200 / 30, places=6)
         self.assertAlmostEqual(row["current_tx_bps"], 500 / 30, places=6)
         self.assertEqual(row["current_share_percent"], 100.0)
@@ -124,6 +125,38 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertEqual(capacity["capacity_bytes_per_sec"], 125000000)
         self.assertEqual(capacity["capacity_mbps"], 1000.0)
         self.assertEqual(capacity["source"], "server_info.json:bandwidth_limit_mbps")
+
+    def test_get_path_mtu_probe_finds_first_successful_payload(self) -> None:
+        responses = iter([1, 1, 0])
+
+        class _FakeCompleted:
+            def __init__(self, returncode: int) -> None:
+                self.returncode = returncode
+                self.stdout = ""
+                self.stderr = ""
+
+        with patch.object(collector, "MTU_PROBE_ENABLED", True), patch.object(collector, "MTU_PROBE_TARGET", "1.1.1.1"), patch.object(
+            collector, "MTU_PROBE_PAYLOADS", (1472, 1464, 1452)
+        ), patch.object(collector, "run_command", side_effect=lambda *args, **kwargs: _FakeCompleted(next(responses))):
+            probe = collector.get_path_mtu_probe()
+
+        self.assertTrue(probe["enabled"])
+        self.assertTrue(probe["ok"])
+        self.assertEqual(probe["max_payload_bytes"], 1452)
+        self.assertEqual(probe["estimated_path_mtu"], 1480)
+        self.assertEqual(probe["tested_payloads"], [1472, 1464, 1452])
+
+    def test_get_interface_mtu_reads_container_mtu(self) -> None:
+        class _FakeCompleted:
+            def __init__(self, stdout: str) -> None:
+                self.returncode = 0
+                self.stdout = stdout
+                self.stderr = ""
+
+        with patch.object(collector, "run_command", return_value=_FakeCompleted("1420\n")):
+            mtu = collector.get_interface_mtu()
+
+        self.assertEqual(mtu, 1420)
 
     def test_update_daily_bandwidth_stats_tracks_peak_and_average(self) -> None:
         daily = {
@@ -158,6 +191,30 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertAlmostEqual(updated["average_current_total_bps"], 4357.33, places=2)
         self.assertEqual(updated["last_current_total_bps"], 3072)
         self.assertEqual(updated["last_headroom_bytes_per_sec"], 124996928)
+
+    def test_build_warnings_flags_low_path_mtu(self) -> None:
+        summary = {
+            "container": {"status": "running"},
+            "vpn": {"active_connections": 1},
+            "server": {
+                "disk_root": {"used_percent": 10.0},
+                "memory": {"available_bytes": 1024 * 1024 * 1024},
+                "ping": {"target": "1.1.1.1", "packet_loss_percent": None, "latency_avg_ms": 8.0},
+                "transport": {
+                    "ok": True,
+                    "estimated_path_mtu": 1380,
+                    "interface_mtu": 1420,
+                    "recommended_interface_mtu": 1300,
+                    "target": "1.1.1.1",
+                },
+                "bandwidth": {"utilization_percent": 0.0, "over_capacity_bytes_per_sec": 0},
+            },
+        }
+
+        warnings = collector.build_warnings(summary)
+
+        self.assertTrue(any("MTU/fragmentation issue" in item for item in warnings))
+        self.assertTrue(any("MTU awg0=" in item for item in warnings))
 
     def test_collect_writes_summary_and_dashboard_outputs(self) -> None:
         peer = {
@@ -300,6 +357,7 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertEqual(summary["vpn"]["total_peers"], 1)
         self.assertEqual(summary["vpn"]["active_connections"], 1)
         self.assertGreater(summary["vpn"]["current_total_bps"], 0)
+        self.assertEqual(summary["peers"][0]["endpoint_location"], "локальная сеть")
         self.assertEqual(summary["peers"][0]["current_share_percent"], 100.0)
         self.assertIn("bandwidth", summary["server"])
         self.assertIn("daily", summary["server"]["bandwidth"])
@@ -399,6 +457,8 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertIn("Контейнер: amnezia-awg2 [running]", output)
         self.assertIn("VPN: AmneziaWG / awg0 port=47895 peers=2 active=1 window=60s flow=", output)
         self.assertIn("Bandwidth: current=", output)
+        self.assertIn("Transport: PMTU=", output)
+        self.assertIn("awg0_mtu=", output)
         self.assertIn("avg_day=4.00 KiB/s", output)
         self.assertIn("peak_day=8.00 KiB/s", output)
         self.assertIn("state=", output)

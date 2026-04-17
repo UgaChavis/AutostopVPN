@@ -33,6 +33,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `amnezia_vpn_shell.py`
 - `open_amnezia_dashboard.ps1`
 - `open_amnezia_dashboard.cmd`
+- `apply_telegram_mtu_fix.ps1`
 - `tests/test_amnezia_traffic_collector.py`
 
 ## What The Collector Produces
@@ -63,7 +64,30 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - active peer count based on recent handshake age
 - server load, memory, disk and uptime
 - ping latency and packet loss
+- path MTU probing and the live `awg0` MTU from inside the VPN container
 - warning list for degraded conditions
+
+## Telegram Stability Fix
+
+If Telegram voice notes, media, or sticker packs pause inside the VPN, the first server-side fix is to lower the tunnel MTU.
+
+Recommended order:
+
+1. Read the current values from the dashboard or `status` output.
+2. If `Transport:` shows `awg0 MTU` above the recommended value, try `1380` first.
+3. Apply the runtime test on the server:
+
+```bash
+docker exec amnezia-awg2 ip link set dev awg0 mtu 1380
+docker exec amnezia-awg2 cat /sys/class/net/awg0/mtu
+```
+
+4. Re-test Telegram voice playback and media loading.
+5. If it is still unstable, try `1360`.
+6. If `1380` fixes the pauses, make the change persistent in the live container start/config path for `amnezia-awg2`.
+7. Put the chosen permanent value into `amnezia_server_info.json` as `wireguard_mtu` so the dashboard shows the same target on future runs.
+
+This is a tunnel-level fix. Telegram itself does not need any special configuration if the VPN path is clean.
 
 ## Local Layout
 
@@ -84,6 +108,8 @@ The collector reads these environment variables:
 - `AMNEZIA_PING_TARGET`
 - `AMNEZIA_ACTIVE_WINDOW_SECONDS`
 - `AMNEZIA_PING_COUNT`
+- `AMNEZIA_MTU_PROBE`
+- `AMNEZIA_MTU_TARGET`
 
 ## Safe Deployment Outline
 
@@ -94,8 +120,11 @@ The collector reads these environment variables:
 5. If the provider cap is known, set `bandwidth_limit_mbps`; otherwise the collector will fall back to the default network interface speed when available.
 6. Run one manual collector execution.
 7. Reload `systemd`, restart the collector timer, enable the localhost dashboard service and verify `127.0.0.1:18080`.
-8. The collector timer refreshes every 10 seconds to keep the shell snapshot fresh without making the server noisy.
-8. Open the shell app from Windows; the SSH tunnel is handled inside the app.
+8. Check the `Transport:` line in the summary output. If the live `awg0` MTU is above the recommended value, lower it and re-test Telegram voice playback.
+9. The collector timer refreshes every 10 seconds to keep the shell snapshot fresh without making the server noisy.
+10. Open the shell app from Windows; the SSH tunnel is handled inside the app.
+
+For this deployment, the chosen value is `1380`.
 
 ## Rollback
 

@@ -16,6 +16,7 @@
   "project_path": "/opt/autostopcrm",
   "vpn_container": "amnezia-awg2",
   "network_interface": "eth0",
+  "wireguard_mtu": 1380,
   "bandwidth_limit_mbps": 1000,
   "notes": [
     "Панель доступна только локально через SSH-туннель.",

@@ -4,7 +4,7 @@ param(
     [string]$KeyPath = "",
     [int]$LocalPort = 18765,
     [int]$RemotePort = 18080,
-    [int]$RefreshSeconds = 5
+    [double]$RefreshSeconds = 1
 )
 
 $ErrorActionPreference = "Stop"

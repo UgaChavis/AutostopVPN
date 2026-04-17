@@ -9,6 +9,7 @@ This file is the project orientation sheet for Codex and maintainers.
 - Desktop launcher: `C:\Users\9860606\Desktop\Autostop VPN.lnk`
 - GitHub VPN branch: `autostopVPN`
 - Server mirror path: `/opt/autostopcrm`
+- External access documentation root: `C:\Users\User\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`
 
 ## Main Files
 
@@ -26,6 +27,7 @@ This file is the project orientation sheet for Codex and maintainers.
 - `AMNEZIA_VPN_MONITORING.md`: operator runbook
 - `LOCAL_INSTALL.md`: local install guide
 - `tests/test_amnezia_traffic_collector.py`: logic tests
+- `ACCESS_AND_DOCS.md`: repository navigation and access-key lookup guide
 
 ## Runtime Flow
 
@@ -57,6 +59,13 @@ This file is the project orientation sheet for Codex and maintainers.
 - `AMNEZIA_PING_COUNT`
 - `bandwidth_limit_mbps`
 - `network_interface`
+
+## Access Notes
+
+- Read `ACCESS_AND_DOCS.md` before looking for credentials or server access instructions.
+- The external documentation folder contains the local access cheat sheets and secret-access notes.
+- The launcher looks for SSH keys via `AUTOSTOPVPN_SSH_KEY` and `AUTOSTOPCRM_SSH_KEY`, then falls back to the standard names in `~/.ssh`.
+- Keep private keys and passwords out of Git and out of mirrored repo copies unless you are performing a controlled recovery.
 
 ## Verification Checklist
 

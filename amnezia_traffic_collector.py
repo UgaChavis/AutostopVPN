@@ -2,6 +2,7 @@
 import csv
 import html
 import json
+import ipaddress
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from urllib.request import Request, urlopen
 
 try:
     from zoneinfo import ZoneInfo
@@ -27,6 +29,9 @@ TIMEZONE = os.environ.get("AMNEZIA_TRAFFIC_TZ", "Asia/Krasnoyarsk")
 PING_TARGET = os.environ.get("AMNEZIA_PING_TARGET", "1.1.1.1")
 ACTIVE_WINDOW_SECONDS = int(os.environ.get("AMNEZIA_ACTIVE_WINDOW_SECONDS", "180"))
 PING_COUNT = int(os.environ.get("AMNEZIA_PING_COUNT", "3"))
+MTU_PROBE_ENABLED = os.environ.get("AMNEZIA_MTU_PROBE", "1") != "0"
+MTU_PROBE_TARGET = os.environ.get("AMNEZIA_MTU_TARGET", PING_TARGET)
+MTU_PROBE_PAYLOADS = (1472, 1464, 1452, 1432, 1412, 1380)
 
 STATE_FILE = DATA_DIR / "state.json"
 TOTALS_FILE = DATA_DIR / "totals.json"
@@ -38,6 +43,8 @@ ALIASES_FILE = DATA_DIR / "aliases.csv"
 SERVER_INFO_FILE = DATA_DIR / "server_info.json"
 WEB_SUMMARY_FILE = WEB_DIR / "dashboard.json"
 WEB_INDEX_FILE = WEB_DIR / "index.html"
+GEO_CACHE_FILE = DATA_DIR / "geo_cache.json"
+GEOLOOKUP_TIMEOUT_SECONDS = 2.0
 
 
 def current_tzinfo():
@@ -68,11 +75,104 @@ def load_json(path: Path, default):
 
 
 def save_json(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     with tmp_path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
         handle.write("\n")
     tmp_path.replace(path)
+
+
+def load_geo_cache() -> Dict[str, object]:
+    payload = load_json(GEO_CACHE_FILE, {"hosts": {}})
+    if not isinstance(payload, dict):
+        return {"hosts": {}}
+    hosts = payload.get("hosts", {})
+    if not isinstance(hosts, dict):
+        payload["hosts"] = {}
+    return payload
+
+
+def split_endpoint_host(endpoint: object) -> str:
+    value = str(endpoint or "").strip()
+    if not value:
+        return ""
+    if value.startswith("[") and "]:" in value:
+        return value[1 : value.index("]")]
+    if value.count(":") == 1:
+        return value.split(":", 1)[0]
+    return value
+
+
+def lookup_public_ip_location(host: str) -> str:
+    providers = (
+        f"https://ipapi.co/{host}/json/",
+        f"https://ip-api.com/json/{host}?fields=status,message,city,regionName,country,countryCode,org,query",
+    )
+    for url in providers:
+        try:
+            request = Request(url, headers={"User-Agent": "AutostopVPN/1.0"})
+            with urlopen(request, timeout=GEOLOOKUP_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("status") == "fail" or payload.get("error"):
+            continue
+
+        city = str(payload.get("city", "")).strip()
+        region = str(payload.get("region", payload.get("regionName", ""))).strip()
+        country = str(payload.get("country_name", payload.get("country", ""))).strip()
+        country_code = str(payload.get("country_code", payload.get("countryCode", ""))).strip()
+        org = str(payload.get("org", "")).strip()
+        if city or region:
+            parts = [part for part in (city, region) if part]
+            if country_code:
+                parts.append(country_code)
+            elif country:
+                parts.append(country)
+            return ", ".join(parts)
+        if country:
+            return country_code or country
+        if org:
+            return org
+
+    return host
+
+
+def format_peer_location(endpoint: object, geo_cache: Dict[str, object]) -> str:
+    host = split_endpoint_host(endpoint)
+    if not host:
+        return "нет endpoint"
+
+    hosts = geo_cache.setdefault("hosts", {})
+    if not isinstance(hosts, dict):
+        hosts = {}
+        geo_cache["hosts"] = hosts
+
+    cached = hosts.get(host)
+    if isinstance(cached, dict):
+        label = str(cached.get("label", "")).strip()
+        if label:
+            return label
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        label = host
+    else:
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_multicast or address.is_reserved:
+            label = "локальная сеть"
+        else:
+            label = lookup_public_ip_location(host)
+
+    hosts[host] = {
+        "label": label,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return label
 
 
 def ensure_dirs() -> None:
@@ -335,6 +435,58 @@ def get_ping_metrics() -> Dict[str, object]:
     }
 
 
+def get_path_mtu_probe() -> Dict[str, object]:
+    if not MTU_PROBE_ENABLED:
+        return {
+            "target": MTU_PROBE_TARGET,
+            "enabled": False,
+            "ok": None,
+            "max_payload_bytes": None,
+            "estimated_path_mtu": None,
+            "tested_payloads": [],
+        }
+
+    ip_overhead = 48 if ":" in MTU_PROBE_TARGET else 28
+    tested_payloads: List[int] = []
+    for payload in MTU_PROBE_PAYLOADS:
+        tested_payloads.append(payload)
+        completed = run_command(
+            ["ping", "-c", "1", "-W", "1", "-M", "do", "-s", str(payload), MTU_PROBE_TARGET],
+            check=False,
+        )
+        if completed.returncode == 0:
+            return {
+                "target": MTU_PROBE_TARGET,
+                "enabled": True,
+                "ok": True,
+                "max_payload_bytes": payload,
+                "estimated_path_mtu": payload + ip_overhead,
+                "tested_payloads": tested_payloads,
+            }
+
+    return {
+        "target": MTU_PROBE_TARGET,
+        "enabled": True,
+        "ok": False,
+        "max_payload_bytes": None,
+        "estimated_path_mtu": None,
+        "tested_payloads": tested_payloads,
+    }
+
+
+def get_interface_mtu() -> Optional[int]:
+    completed = run_command(
+        ["docker", "exec", CONTAINER, "cat", f"/sys/class/net/{INTERFACE}/mtu"],
+        check=False,
+    )
+    raw = (completed.stdout or "").strip()
+    try:
+        mtu = int(raw)
+    except ValueError:
+        return None
+    return mtu if mtu > 0 else None
+
+
 def read_meminfo() -> Dict[str, int]:
     values: Dict[str, int] = {}
     with Path("/proc/meminfo").open("r", encoding="utf-8") as handle:
@@ -363,6 +515,27 @@ def get_server_status(
     server_info = server_info or load_server_info()
     disk_total, disk_used, disk_free = shutil.disk_usage("/")
     ping = get_ping_metrics()
+    transport = get_path_mtu_probe()
+    interface_mtu = get_interface_mtu()
+    server_mtu_hint = server_info.get("wireguard_mtu")
+    try:
+        server_mtu_hint_int = int(server_mtu_hint)
+    except (TypeError, ValueError):
+        server_mtu_hint_int = None
+    if interface_mtu is not None:
+        transport["interface_mtu"] = interface_mtu
+        if server_mtu_hint_int is not None and server_mtu_hint_int > 0:
+            recommended_mtu = server_mtu_hint_int
+        elif transport.get("estimated_path_mtu") is not None:
+            recommended_mtu = max(1280, int(transport["estimated_path_mtu"]) - 80)
+        else:
+            recommended_mtu = 1420
+        transport["recommended_interface_mtu"] = recommended_mtu
+        transport["mtu_gap"] = max(interface_mtu - recommended_mtu, 0)
+    else:
+        transport["interface_mtu"] = None
+        transport["recommended_interface_mtu"] = 1420
+        transport["mtu_gap"] = None
     uptime_seconds = 0.0
     try:
         uptime_seconds = float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])
@@ -397,6 +570,7 @@ def get_server_status(
         },
         "uptime_seconds": int(uptime_seconds),
         "ping": ping,
+        "transport": transport,
         "bandwidth": bandwidth,
     }
 
@@ -602,6 +776,7 @@ def build_warnings(summary: Dict[str, object]) -> List[str]:
     vpn = summary["vpn"]
     server = summary["server"]
     ping = server["ping"]
+    transport = server.get("transport", {})
     disk = server["disk_root"]
     memory = server["memory"]
     container = summary["container"]
@@ -617,6 +792,20 @@ def build_warnings(summary: Dict[str, object]) -> List[str]:
         warnings.append(f"Потери до {ping['target']}: {ping['packet_loss_percent']:.2f}%.")
     if ping["latency_avg_ms"] is not None and ping["latency_avg_ms"] > 100:
         warnings.append(f"Средняя задержка до {ping['target']}: {ping['latency_avg_ms']:.2f} мс.")
+    if isinstance(transport, dict):
+        estimated_path_mtu = transport.get("estimated_path_mtu")
+        if estimated_path_mtu is not None and int(estimated_path_mtu) < 1420:
+            warnings.append(
+                f"Похоже на MTU/fragmentation issue: path MTU около {int(estimated_path_mtu)} bytes."
+            )
+        interface_mtu = transport.get("interface_mtu")
+        recommended_mtu = transport.get("recommended_interface_mtu")
+        if interface_mtu is not None and recommended_mtu is not None and int(interface_mtu) > int(recommended_mtu):
+            warnings.append(
+                f"MTU awg0={int(interface_mtu)} выше ориентира {int(recommended_mtu)}; для Telegram можно попробовать 1380-1420."
+            )
+        elif transport.get("ok") is False:
+            warnings.append(f"Не удалось подтвердить PMTU до {transport.get('target', MTU_PROBE_TARGET)}.")
     if vpn["active_connections"] == 0:
         warnings.append("Нет активных handshake в текущем окне активности.")
     bandwidth_utilization = bandwidth.get("utilization_percent")
@@ -1154,6 +1343,7 @@ def write_reports(totals: Dict[str, object], daily: Dict[str, object], summary: 
         writer.writerow(
             [
                 "name",
+                "endpoint_location",
                 "vpn_ip",
                 "is_active",
                 "handshake_age_seconds",
@@ -1176,6 +1366,7 @@ def write_reports(totals: Dict[str, object], daily: Dict[str, object], summary: 
             writer.writerow(
                 [
                     peer["name"],
+                    peer.get("endpoint_location", ""),
                     peer["vpn_ip"],
                     peer["is_active"],
                     peer["handshake_age_seconds"],
@@ -1210,13 +1401,14 @@ def write_reports(totals: Dict[str, object], daily: Dict[str, object], summary: 
         f"Загрузка канала: {bandwidth_utilization}",
         f"Состояние канала: {bandwidth_state['label']}",
         "",
-        "| Имя | VPN IP | Активен | Handshake | Текущая | Доля потока | Средняя за день | Сегодня | Всего | Ключ |",
-        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Имя | Локация | VPN IP | Активен | Handshake | Текущая | Доля потока | Средняя за день | Сегодня | Всего | Ключ |",
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for peer in peers:
         lines.append(
-            "| {name} | {vpn_ip} | {active} | {handshake} | {current_total} | {current_share} | {daily_avg} | {today_total} | {total} | `{key}` |".format(
+            "| {name} | {location} | {vpn_ip} | {active} | {handshake} | {current_total} | {current_share} | {daily_avg} | {today_total} | {total} | `{key}` |".format(
                 name=peer["name"],
+                location=peer.get("endpoint_location", ""),
                 vpn_ip=peer["vpn_ip"],
                 active="да" if peer["is_active"] else "нет",
                 handshake=peer["handshake_age"],
@@ -1241,6 +1433,7 @@ def build_peer_rows(
     state: Dict[str, object],
     meta: Dict[str, str],
     current_time: datetime,
+    geo_cache: Optional[Dict[str, object]] = None,
 ) -> Tuple[List[Dict[str, object]], Dict[str, object], Dict[str, object]]:
     current_ts = int(current_time.timestamp())
     same_container = state.get("container_id") == meta["container_id"]
@@ -1264,6 +1457,9 @@ def build_peer_rows(
         "sampled_at": current_time.isoformat(),
         "peers": {},
     }
+
+    if geo_cache is None:
+        geo_cache = {"hosts": {}}
 
     rows: List[Dict[str, object]] = []
     for peer in peers:
@@ -1341,6 +1537,8 @@ def build_peer_rows(
             {
                 "name": total_entry["name"],
                 "vpn_ip": peer["vpn_ip"],
+                "endpoint": peer["endpoint"],
+                "endpoint_location": format_peer_location(peer["endpoint"], geo_cache),
                 "vpn_ip_sort": ip_sort_key(str(peer["vpn_ip"])),
                 "public_key": public_key,
                 "public_key_short": short_key(public_key),
@@ -1385,6 +1583,7 @@ def collect() -> int:
     meta = inspect_container()
     interface_meta, peers = get_wg_dump()
     aliases = merge_aliases(peers)
+    geo_cache = load_geo_cache()
     state = load_json(
         STATE_FILE,
         {"container_id": None, "started_at": None, "sampled_at": None, "peers": {}},
@@ -1407,6 +1606,7 @@ def collect() -> int:
         state=state,
         meta=meta,
         current_time=current_time,
+        geo_cache=geo_cache,
     )
     current_total_bps = int(sum(float(peer["current_total_bps"]) for peer in peer_rows))
     accounting_started_at = current_time
@@ -1481,6 +1681,7 @@ def collect() -> int:
 
     save_json(STATE_FILE, new_state)
     save_json(TOTALS_FILE, totals)
+    save_json(GEO_CACHE_FILE, geo_cache)
     save_json(DAILY_DIR / f"{current_time.date().isoformat()}.json", daily)
     save_json(SUMMARY_FILE, summary)
     write_reports(totals, daily, summary)
@@ -1593,6 +1794,16 @@ def render_status(summary: Dict[str, object]) -> List[str]:
         bandwidth.get("utilization_percent"),
         int(bandwidth.get("over_capacity_bytes_per_sec", 0) or 0),
     )
+    transport = server.get("transport", {})
+    path_mtu_label = "н/д"
+    if isinstance(transport, dict) and transport.get("estimated_path_mtu") is not None:
+        path_mtu_label = f"{int(transport['estimated_path_mtu'])} B"
+    interface_mtu_label = "н/д"
+    if isinstance(transport, dict) and transport.get("interface_mtu") is not None:
+        interface_mtu_label = f"{int(transport['interface_mtu'])} B"
+    recommended_mtu_label = "н/д"
+    if isinstance(transport, dict) and transport.get("recommended_interface_mtu") is not None:
+        recommended_mtu_label = f"{int(transport['recommended_interface_mtu'])} B"
     lines = [
         f"Обновлено: {updated_at}",
         f"Контейнер: {container.get('name', '')} [{container.get('status', '')}] image={container.get('image', '')}",
@@ -1622,6 +1833,7 @@ def render_status(summary: Dict[str, object]) -> List[str]:
             f"headroom={bandwidth_headroom_label} "
             f"state={bandwidth_state['label']}"
         ),
+        f"Transport: PMTU={path_mtu_label} awg0_mtu={interface_mtu_label} recommended={recommended_mtu_label}",
         f"Warnings: {len(warnings)}",
     ]
     if warnings:
