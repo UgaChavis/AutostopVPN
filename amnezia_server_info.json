@@ -15,8 +15,8 @@
   "os": "Ubuntu 24.04.3 LTS",
   "project_path": "/opt/autostopcrm",
   "vpn_container": "amnezia-awg2",
-  "network_interface": "",
-  "bandwidth_limit_mbps": null,
+  "network_interface": "eth0",
+  "bandwidth_limit_mbps": 1000,
   "notes": [
     "Панель доступна только локально через SSH-туннель.",
     "Основной домен CRM: crm.autostopcrm.ru.",
