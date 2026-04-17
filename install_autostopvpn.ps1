@@ -31,20 +31,30 @@ function Copy-ProjectTree {
 
 function New-DesktopShortcut {
     param(
-        [Parameter(Mandatory = $true)][string]$TargetScript,
+        [Parameter(Mandatory = $true)][string]$TargetExecutable,
+        [Parameter(Mandatory = $true)][string]$TargetArguments,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [Parameter(Mandatory = $true)][string]$ShortcutPath
     )
 
     $shell = New-Object -ComObject WScript.Shell
     $shortcut = $shell.CreateShortcut($ShortcutPath)
-    $powershell = Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0\powershell.exe"
-    $shortcut.TargetPath = $powershell
-    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$TargetScript`""
+    $shortcut.TargetPath = $TargetExecutable
+    $shortcut.Arguments = $TargetArguments
     $shortcut.WorkingDirectory = $WorkingDirectory
-    $shortcut.IconLocation = "$powershell,0"
+    $shortcut.IconLocation = "$TargetExecutable,0"
     $shortcut.Description = "Autostop VPN shell launcher"
     $shortcut.Save()
+}
+
+function Get-PythonExecutable {
+    foreach ($name in @("pythonw.exe", "python.exe")) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+    throw "Python executable not found."
 }
 
 $sourceRoot = Get-FullPath $SourceRoot
@@ -65,7 +75,10 @@ Copy-ProjectTree -SourceRoot $sourceRoot -DestinationRoot $installRoot
 
 $desktop = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktop "Autostop VPN.lnk"
-New-DesktopShortcut -TargetScript (Join-Path $installRoot "start_autostopvpn.ps1") -WorkingDirectory $installRoot -ShortcutPath $shortcutPath
+$python = Get-PythonExecutable
+$shellScript = Join-Path $installRoot "amnezia_vpn_shell.py"
+$arguments = "`"$shellScript`" --host 46.8.254.243 --ssh-user root --local-port 18765 --remote-port 18080 --refresh-seconds 5"
+New-DesktopShortcut -TargetExecutable $python -TargetArguments $arguments -WorkingDirectory $installRoot -ShortcutPath $shortcutPath
 
 Write-Host "Autostop VPN installed to $installRoot"
 Write-Host "Desktop shortcut created at $shortcutPath"

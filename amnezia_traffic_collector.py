@@ -715,6 +715,10 @@ def render_dashboard(summary: Dict[str, object]) -> str:
         bandwidth_utilization if bandwidth_utilization is not None else None,
         int(bandwidth.get("over_capacity_bytes_per_sec", 0) or 0),
     )
+    bandwidth_bar_width = float(bandwidth_state["bar_width_percent"])
+    if bandwidth_capacity_bps > 0 and current_total_bps > 0:
+        bandwidth_bar_width = max(bandwidth_bar_width, 2.0)
+    bandwidth_bar_width = min(bandwidth_bar_width, 100.0)
     bandwidth_current_of_limit = (
         f"{format_rate(current_total_bps)} / {bandwidth_limit_label}" if bandwidth_capacity_bps else format_rate(current_total_bps)
     )
@@ -1094,7 +1098,7 @@ def render_dashboard(summary: Dict[str, object]) -> str:
         bandwidth_state_class=esc(bandwidth_state["class"]),
         bandwidth_state_label=esc(bandwidth_state["label"]),
         bandwidth_state_note=esc(bandwidth_state["note"]),
-        bandwidth_bar_width=esc(f"{bandwidth_state['bar_width_percent']:.2f}"),
+        bandwidth_bar_width=esc(f"{bandwidth_bar_width:.2f}"),
         bandwidth_day_peak_utilization=esc(bandwidth_day_peak_utilization_label),
         bandwidth_context=esc(bandwidth_context),
         ping_target=esc(ping["target"]),

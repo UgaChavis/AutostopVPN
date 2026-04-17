@@ -313,6 +313,7 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertNotIn("F5", html)
         self.assertIn("traffic-banner", html)
         self.assertIn("Загрузка канала", html)
+        self.assertIn('style="width: 2.00%"', html)
         self.assertIn("current_share_percent", report)
         self.assertIn("vpn_ip", report)
         self.assertIn("Пик потока за день:", report_md)

@@ -94,7 +94,7 @@ The collector reads these environment variables:
 5. If the provider cap is known, set `bandwidth_limit_mbps`; otherwise the collector will fall back to the default network interface speed when available.
 6. Run one manual collector execution.
 7. Reload `systemd`, restart the collector timer, enable the localhost dashboard service and verify `127.0.0.1:18080`.
-8. Open the shell app through an SSH tunnel from Windows.
+8. Open the shell app from Windows; the SSH tunnel is handled inside the app.
 
 ## Rollback
 
@@ -113,9 +113,8 @@ Use `open_amnezia_dashboard.cmd`.
 
 It:
 
-- opens an SSH tunnel from `127.0.0.1:18765` to `127.0.0.1:18080` on the server
-- reuses an existing tunnel when possible
 - launches the native Autostop VPN shell window
+- starts and hides the SSH tunnel inside the app
 - refreshes the view every few seconds while the window is open
 
 No public dashboard port is exposed to the internet.

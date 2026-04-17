@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
 import threading
+import time
+import subprocess
+import socket
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from urllib.error import HTTPError, URLError
+from typing import Dict, List, Optional
 from urllib.request import Request, urlopen
 
 try:
@@ -27,8 +31,11 @@ for candidate in (SCRIPT_DIR, SCRIPT_DIR / "scripts"):
 import amnezia_traffic_collector as collector
 
 
-DEFAULT_DASHBOARD_URL = "http://127.0.0.1:18765/dashboard.json"
 DEFAULT_REFRESH_SECONDS = 5
+DEFAULT_LOCAL_PORT = 18765
+DEFAULT_REMOTE_PORT = 18080
+DEFAULT_HOST = "46.8.254.243"
+DEFAULT_SSH_USER = "root"
 REQUEST_TIMEOUT_SECONDS = 3.0
 
 
@@ -72,6 +79,75 @@ def _format_snapshot_age(updated_at: object) -> str:
         return "н/д"
     age_seconds = max(int((collector.now_local() - parsed).total_seconds()), 0)
     return collector.format_age(age_seconds)
+
+
+def _test_local_port(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.7):
+            return True
+    except OSError:
+        return False
+
+
+def _resolve_ssh_executable() -> str:
+    for candidate in ("ssh.exe", "ssh"):
+        command = shutil.which(candidate)
+        if command:
+            return command
+    raise FileNotFoundError("ssh executable not found")
+
+
+def _resolve_key_path(explicit_key_path: str = "") -> str:
+    if explicit_key_path:
+        candidate = Path(explicit_key_path)
+        if candidate.exists():
+            return str(candidate)
+        raise FileNotFoundError(f"SSH key not found: {candidate}")
+
+    candidates = [
+        Path.home() / ".ssh" / "autostopvpn_server_ed25519",
+        Path.home() / ".ssh" / "autostopcrm_server_ed25519",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    raise FileNotFoundError("SSH key not found. Checked autostopvpn_server_ed25519 and autostopcrm_server_ed25519.")
+
+
+def _start_ssh_tunnel(host: str, user: str, key_path: str, local_port: int, remote_port: int) -> subprocess.Popen[str]:
+    ssh_executable = _resolve_ssh_executable()
+    tunnel_spec = f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    startupinfo = None
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    return subprocess.Popen(
+        [
+            ssh_executable,
+            "-i",
+            key_path,
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-N",
+            "-L",
+            tunnel_spec,
+            f"{user}@{host}",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        creationflags=creationflags,
+        startupinfo=startupinfo,
+    )
 
 
 def fetch_summary(url: str, timeout: float = REQUEST_TIMEOUT_SECONDS) -> Dict[str, object]:
@@ -188,15 +264,31 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
 
 
 class ShellApp:
-    def __init__(self, root: tk.Tk, dashboard_url: str, refresh_seconds: int) -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        host: str,
+        ssh_user: str,
+        key_path: str,
+        local_port: int,
+        remote_port: int,
+        refresh_seconds: int,
+        dashboard_url: Optional[str] = None,
+    ) -> None:
         self.root = root
-        self.dashboard_url = dashboard_url
+        self.host = host
+        self.ssh_user = ssh_user
+        self.key_path = key_path
+        self.local_port = local_port
+        self.remote_port = remote_port
+        self.dashboard_url = dashboard_url or f"http://127.0.0.1:{local_port}/dashboard.json"
         self.refresh_seconds = max(refresh_seconds, 1)
         self.refresh_ms = self.refresh_seconds * 1000
         self._refresh_after_id: Optional[str] = None
         self._refresh_in_flight = False
         self._closed = False
         self._last_model: Optional[Dict[str, object]] = None
+        self._ssh_process: Optional[subprocess.Popen[bytes]] = None
 
         self.root.title("Autostop VPN Shell")
         self.root.geometry("1200x780")
@@ -339,8 +431,15 @@ class ShellApp:
         self.channel_info_label.grid(row=1, column=0, sticky="w", pady=(2, 0))
         self.channel_state_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
         self.channel_state_label.grid(row=2, column=0, sticky="w", pady=(2, 0))
-        self.channel_bar = ttk.Progressbar(frame, orient="horizontal", mode="determinate", maximum=100.0)
+        self.channel_bar = tk.Canvas(
+            frame,
+            height=34,
+            background="#f6f6f2",
+            highlightthickness=0,
+            borderwidth=0,
+        )
         self.channel_bar.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        self.channel_bar.bind("<Configure>", self._redraw_channel_bar)
         self.channel_day_label = ttk.Label(frame, text="", style="ShellSmall.TLabel")
         self.channel_day_label.grid(row=4, column=0, sticky="w", pady=(6, 0))
         return frame
@@ -395,6 +494,28 @@ class ShellApp:
         self._refresh_after_id = None
         self.request_refresh()
 
+    def _port_in_use(self) -> bool:
+        return _test_local_port(self.local_port)
+
+    def _ensure_tunnel(self) -> None:
+        if self._closed:
+            return
+        if self._port_in_use():
+            return
+        if self._ssh_process is not None and self._ssh_process.poll() is not None:
+            self._ssh_process = None
+        if self._ssh_process is None:
+            self._ssh_process = _start_ssh_tunnel(self.host, self.ssh_user, self.key_path, self.local_port, self.remote_port)
+        for _ in range(40):
+            if self._closed:
+                return
+            if self._port_in_use():
+                return
+            if self._ssh_process is not None and self._ssh_process.poll() is not None:
+                raise RuntimeError(f"SSH tunnel exited with code {self._ssh_process.returncode}")
+            time.sleep(0.25)
+        raise TimeoutError(f"Tunnel did not open on 127.0.0.1:{self.local_port}")
+
     def request_refresh(self) -> None:
         if self._closed or self._refresh_in_flight:
             return
@@ -406,6 +527,7 @@ class ShellApp:
 
     def _refresh_worker(self) -> None:
         try:
+            self._ensure_tunnel()
             summary = fetch_summary(self.dashboard_url)
             model = build_view_model(summary, self.dashboard_url, self.refresh_seconds)
         except Exception as exc:  # pragma: no cover - network and runtime dependent
@@ -430,7 +552,8 @@ class ShellApp:
             text=f"Загрузка: {model['bandwidth_utilization']} | Запас: {model['bandwidth_headroom']}"
         )
         self.channel_state_label.configure(text=f"Статус канала: {model['bandwidth_state_label']}")
-        self.channel_bar.configure(value=model["bandwidth_bar_width_percent"])
+        self._last_model = model
+        self._redraw_channel_bar()
         self.channel_day_label.configure(
             text=f"Средний поток за день: {model['daily_average']} | Пик за день: {model['daily_peak']} ({model['daily_peak_utilization']})"
         )
@@ -496,17 +619,87 @@ class ShellApp:
                 ),
             )
 
+    def _redraw_channel_bar(self, _event: object = None) -> None:
+        canvas = self.channel_bar
+        if canvas is None:
+            return
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 1)
+        height = max(canvas.winfo_height(), 1)
+        model = self._last_model
+        state_class = str(model.get("bandwidth_state_class", "muted")) if model else "muted"
+        utilization = _coerce_float(model.get("bandwidth_bar_width_percent")) if model else 0.0
+        current_total_bps = _coerce_int(model.get("current_total_bps")) if model else 0
+        fill_width = 0
+        if model and current_total_bps > 0:
+            fill_width = max(int(round(width * utilization / 100.0)), 6)
+            fill_width = min(fill_width, width)
+
+        colors = {
+            "ok": ("#dfeadf", "#2f7a36", "#18351d"),
+            "warn": ("#f2e1b8", "#9a6422", "#5b3a11"),
+            "danger": ("#f0c0c0", "#a33c3c", "#5f1717"),
+            "muted": ("#dcdcdc", "#8a8a8a", "#666666"),
+        }
+        track_color, fill_color, marker_color = colors.get(state_class, colors["muted"])
+
+        margin_y = 7
+        track_top = margin_y
+        track_bottom = height - margin_y
+        canvas.create_rectangle(0, track_top, width, track_bottom, fill=track_color, outline="#8b8b8b")
+        if fill_width > 0:
+            canvas.create_rectangle(0, track_top, fill_width, track_bottom, fill=fill_color, outline=fill_color)
+
+        for fraction in (0.25, 0.5, 0.75, 1.0):
+            tick_x = int(round(width * fraction))
+            canvas.create_line(tick_x, track_top, tick_x, track_bottom, fill="#ffffff", width=1)
+
+        marker_x = 0
+        if model and current_total_bps > 0 and width > 0:
+            marker_x = min(max(int(round(width * utilization / 100.0)), 1), width - 1)
+            canvas.create_line(marker_x, track_top - 2, marker_x, track_bottom + 2, fill=marker_color, width=2)
+
+        label = "Канал недоступен"
+        if model:
+            label = f"{model['bandwidth_utilization']} | {model['current_total']} / {model['bandwidth_limit']}"
+        canvas.create_text(
+            8,
+            2,
+            anchor="nw",
+            text=label,
+            fill="#111111",
+            font=("Consolas", 9, "bold"),
+        )
+        if model and current_total_bps > 0:
+            canvas.create_text(
+                marker_x + 6 if marker_x < width - 80 else max(marker_x - 80, 4),
+                height - 2,
+                anchor="sw",
+                text=f"{utilization:.2f}%",
+                fill=marker_color,
+                font=("Consolas", 8, "bold"),
+            )
+
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
         self._cancel_refresh_timer()
+        if self._ssh_process is not None and self._ssh_process.poll() is None:
+            try:
+                self._ssh_process.terminate()
+            except Exception:  # pragma: no cover - cleanup best effort
+                pass
         self.root.destroy()
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Autostop VPN desktop shell")
-    parser.add_argument("--url", default=DEFAULT_DASHBOARD_URL, help="Dashboard JSON URL")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="SSH host name")
+    parser.add_argument("--ssh-user", default=DEFAULT_SSH_USER, help="SSH user")
+    parser.add_argument("--key-path", default="", help="SSH private key path")
+    parser.add_argument("--local-port", type=int, default=DEFAULT_LOCAL_PORT, help="Local tunnel port")
+    parser.add_argument("--remote-port", type=int, default=DEFAULT_REMOTE_PORT, help="Remote dashboard port")
     parser.add_argument("--refresh-seconds", type=int, default=DEFAULT_REFRESH_SECONDS, help="Auto-refresh interval")
     return parser.parse_args(argv)
 
@@ -517,7 +710,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     args = parse_args(argv)
     root = tk.Tk()
-    ShellApp(root, args.url, args.refresh_seconds)
+    ShellApp(
+        root,
+        host=args.host,
+        ssh_user=args.ssh_user,
+        key_path=_resolve_key_path(args.key_path),
+        local_port=args.local_port,
+        remote_port=args.remote_port,
+        refresh_seconds=args.refresh_seconds,
+    )
     root.mainloop()
     return 0
 

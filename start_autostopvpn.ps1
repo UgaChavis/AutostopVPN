@@ -10,9 +10,4 @@ if ($OpenReadme) {
     return
 }
 
-$launcher = Join-Path $scriptRoot "open_amnezia_dashboard.ps1"
-if (-not (Test-Path $launcher)) {
-    throw "Launcher script not found: $launcher"
-}
-
-& $launcher
+& (Join-Path $scriptRoot "open_amnezia_dashboard.ps1")

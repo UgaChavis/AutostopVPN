@@ -16,7 +16,7 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md).
 - shows a top-of-page traffic banner with channel load, limit, headroom, and risk state
 - renders JSON and text reports and keeps a lightweight HTML fallback view for diagnostics
 - serves the latest snapshot on the server side and exposes it to the desktop shell as JSON
-- opens a native Windows shell window that refreshes the latest snapshot through SSH
+- opens a native Windows shell window with the SSH tunnel hidden inside the app
 - supports a local installation into `%LOCALAPPDATA%\AutostopVPN` with a desktop shortcut
 
 ## Repository Layout
@@ -122,7 +122,7 @@ Open the shell UI locally through SSH:
 .\open_amnezia_dashboard.ps1
 ```
 
-The launcher checks `autostopvpn_server_ed25519` first and falls back to `autostopcrm_server_ed25519` if the local key is not present. It then opens the native shell window instead of a browser.
+The launcher checks `autostopvpn_server_ed25519` first and falls back to `autostopcrm_server_ed25519` if the local key is not present. It then opens the native shell window without a second console or browser window.
 The shell keeps refreshing the live snapshot while it is open, and the collector timer on the server now runs every 20 seconds by default.
 
 Inspect the latest cached state:
