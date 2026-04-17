@@ -1,0 +1,26 @@
+{
+  "title": "Данные сервера",
+  "server_role": "VPN и мониторинг",
+  "provider_name": "Mnogoweb",
+  "provider_site": "https://mnogoweb.in",
+  "purchase_note": "По тех. хостнейму vps26457.mnogoweb.in сервер относится к Mnogoweb.",
+  "payment_note": "Оплата через панель провайдера Mnogoweb. Точную ссылку на биллинг можно дописать в этот файл позже.",
+  "billing_url": "",
+  "billing_login_hint": "",
+  "public_ip": "46.8.254.243",
+  "hostname": "vps26457.mnogoweb.in",
+  "domain": "crm.autostopcrm.ru",
+  "ssh_user": "root",
+  "ssh_port": 22,
+  "os": "Ubuntu 24.04.3 LTS",
+  "project_path": "/opt/autostopcrm",
+  "vpn_container": "amnezia-awg2",
+  "network_interface": "",
+  "bandwidth_limit_mbps": null,
+  "notes": [
+    "Панель доступна только локально через SSH-туннель.",
+    "Основной домен CRM: crm.autostopcrm.ru.",
+    "Внешний VPN-порт: 47895/udp.",
+    "Резервный старый сервер: 185.42.164.2."
+  ]
+}

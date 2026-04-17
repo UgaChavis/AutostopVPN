@@ -1,0 +1,14 @@
+[Unit]
+Description=Serve Amnezia VPN dashboard
+After=network-online.target amnezia-traffic-collector.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/lib/amnezia-traffic/web
+ExecStart=/usr/bin/python3 -m http.server 18080 --bind 127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
