@@ -759,7 +759,7 @@ class ShellApp:
                 cards,
                 title,
                 accent,
-                show_secondary=show_secondary,
+                show_secondary_value=show_secondary,
             )
             card.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
             self._card_frames[key] = card
