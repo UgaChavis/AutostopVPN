@@ -133,9 +133,12 @@ class AmneziaVpnShellTests(unittest.TestCase):
         self.assertEqual(model["warnings"], ["first warning"])
         self.assertEqual(model["source_url"], "http://127.0.0.1:18765/dashboard.json")
         self.assertEqual(model["refresh_seconds"], 1.0)
+        self.assertEqual(model["updated_clock"], "12:30:00")
+        self.assertEqual(model["updated_day"], "2026-04-17")
         self.assertEqual(model["current_total_bps"], 3072)
         self.assertEqual(model["bandwidth_limit_bps"], 125000000)
         self.assertEqual(model["bandwidth_utilization_value"], 0.0)
+        self.assertEqual(model["peer_rows"][0]["handshake_age_seconds"], 20)
 
     def test_format_endpoint_location_returns_local_label_for_private_ips(self) -> None:
         self.assertEqual(shell._format_endpoint_location("10.0.0.10:51820"), "локальная сеть")
@@ -275,6 +278,65 @@ class AmneziaVpnShellTests(unittest.TestCase):
             app.updated_label.values[-1]["text"],
             "ssh tunnel // live peer telemetry // matrix load • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
         )
+
+    def test_update_metric_cards_shows_channel_utilization_as_large_value(self) -> None:
+        summary = {
+            "updated_at": "2026-04-17T12:30:00+00:00",
+            "container": {"name": "amnezia-awg2", "status": "running", "image": "amnezia-awg:latest"},
+            "vpn": {
+                "type": "AmneziaWG",
+                "interface": "awg0",
+                "listen_port": 47895,
+                "total_peers": 1,
+                "active_connections": 1,
+                "current_rx_bps": 2048,
+                "current_tx_bps": 1024,
+                "current_total_bps": 3072,
+            },
+            "server": {
+                "loadavg": {"1m": 0.2, "5m": 0.3, "15m": 0.4},
+                "memory": {"used_bytes": 1024, "total_bytes": 4096, "used_percent": 25.0},
+                "disk_root": {"used_bytes": 2048, "total_bytes": 8192, "used_percent": 25.0},
+                "uptime_seconds": 3661,
+                "ping": {"latency_avg_ms": 9.5},
+                "bandwidth": {
+                    "capacity_bytes_per_sec": 125000000,
+                    "utilization_percent": 0.0,
+                    "headroom_bytes_per_sec": 124996928,
+                    "over_capacity_bytes_per_sec": 0,
+                    "daily": {"average_current_total_bps": 1024.0, "peak_current_total_bps": 4096, "peak_utilization_percent": 10.0},
+                },
+            },
+            "peers": [],
+            "warnings": [],
+        }
+        model = shell.build_view_model(summary, "http://127.0.0.1:18765/dashboard.json", 1.0)
+
+        app = shell.ShellApp.__new__(shell.ShellApp)
+        app._all_peer_rows = list(model["peer_rows"])
+        app._filtered_peer_rows = list(model["peer_rows"])
+        app._search_query = type("_Q", (), {"get": lambda self: ""})()
+        app._card_value_labels = {
+            "channel": _DummyLabel(),
+            "peers": _DummyLabel(),
+            "server": _DummyLabel(),
+            "leader": _DummyLabel(),
+            "snapshot": _DummyLabel(),
+        }
+        app._card_secondary_value_labels = {"channel": _DummyLabel()}
+        app._card_note_labels = {
+            "channel": _DummyLabel(),
+            "peers": _DummyLabel(),
+            "server": _DummyLabel(),
+            "leader": _DummyLabel(),
+            "snapshot": _DummyLabel(),
+        }
+        app._render_trend_graph = lambda *_args, **_kwargs: None
+
+        shell.ShellApp._update_metric_cards(app, model)
+
+        self.assertEqual(app._card_value_labels["channel"].values[-1]["text"], "3.00 KiB/s")
+        self.assertEqual(app._card_secondary_value_labels["channel"].values[-1]["text"], "0.00%")
 
     def test_resolve_key_path_prefers_env_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -50,25 +50,27 @@ _SSH_TUNNEL_WAIT_SECONDS = 10.0
 _DEBUG_LOG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AutostopVPN" / "shell_errors.log"
 _SSH_LOG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AutostopVPN" / "ssh_tunnel.log"
 HEADER_BASE_TEXT = "ssh tunnel // live peer telemetry // matrix load"
-APP_BG = "#020508"
-PANEL_BG = "#071016"
-PANEL_ALT_BG = "#09141a"
-BORDER_BG = "#17303a"
-TEXT_PRIMARY = "#e8f7ea"
-TEXT_MUTED = "#77a38a"
-ACCENT = "#00ff88"
-ACCENT_SOFT = "#072917"
-ACCENT_2 = "#3bf0ff"
-STATUS_BG = "#071018"
-STATUS_TEXT = "#8fe7b0"
-WARN_BG = "#1a120d"
-WARN_TEXT = "#ff9b9b"
-ERROR_BG = "#221014"
-ERROR_TEXT = "#ff9b9b"
-ROW_ACTIVE_BG = "#0b1710"
-ROW_INACTIVE_BG = "#091017"
-ROW_SELECTED_BG = "#113725"
-INPUT_BG = "#071018"
+APP_BG = "#050a0d"
+PANEL_BG = "#0a1217"
+PANEL_ALT_BG = "#0f1b22"
+BORDER_BG = "#22343d"
+TEXT_PRIMARY = "#eaf4ee"
+TEXT_MUTED = "#8aa59a"
+ACCENT = "#1eea9a"
+ACCENT_SOFT = "#0a2a1c"
+ACCENT_2 = "#42d6ff"
+STATUS_BG = "#0d171d"
+STATUS_TEXT = "#9be8bd"
+WARN_BG = "#21170c"
+WARN_TEXT = "#ffc36b"
+ERROR_BG = "#241014"
+ERROR_TEXT = "#ff8f9d"
+ROW_ACTIVE_BG = "#0d1c14"
+ROW_INACTIVE_BG = "#0a1216"
+ROW_SELECTED_BG = "#17442e"
+INPUT_BG = "#071116"
+FONT_UI = "Segoe UI"
+FONT_MONO = "Consolas"
 
 
 def _state_badge_colors(state_class: str) -> tuple[str, str]:
@@ -139,6 +141,20 @@ def _format_snapshot_age(updated_at: object) -> str:
         return "н/д"
     age_seconds = max(int((collector.now_local() - parsed).total_seconds()), 0)
     return collector.format_age(age_seconds)
+
+
+def _format_snapshot_clock(updated_at: object) -> str:
+    parsed = collector.parse_iso_datetime(str(updated_at)) if updated_at else None
+    if parsed is None:
+        return "н/д"
+    return parsed.strftime("%H:%M:%S")
+
+
+def _format_snapshot_day(updated_at: object) -> str:
+    parsed = collector.parse_iso_datetime(str(updated_at)) if updated_at else None
+    if parsed is None:
+        return ""
+    return parsed.strftime("%Y-%m-%d")
 
 
 def _split_endpoint(endpoint: object) -> str:
@@ -419,6 +435,7 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
                 "public_key_short": str(peer.get("public_key_short", "")),
                 "active": "да" if bool(peer.get("is_active")) else "нет",
                 "active_value": bool(peer.get("is_active")),
+                "handshake_age_seconds": peer.get("handshake_age_seconds"),
                 "handshake": collector.format_age(peer.get("handshake_age_seconds")),
                 "current": collector.format_rate(current_bps),
                 "current_bps": current_bps,
@@ -454,6 +471,8 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
         "source_url": source_url,
         "refresh_seconds": max(float(refresh_seconds), 0.5),
         "updated_label": collector.format_timestamp(summary.get("updated_at")),
+        "updated_clock": _format_snapshot_clock(summary.get("updated_at")),
+        "updated_day": _format_snapshot_day(summary.get("updated_at")),
         "age_label": _format_snapshot_age(summary.get("updated_at")),
         "container_label": f"{container.get('name', '')} [{collector.translate_container_status(str(container.get('status', '')))}]",
         "container_image": str(container.get("image", "")),
@@ -540,6 +559,7 @@ class ShellApp:
         self._search_query = tk.StringVar(master=self.root, value="")
         self._active_only = tk.BooleanVar(master=self.root, value=False)
         self._card_value_labels: Dict[str, tk.Label] = {}
+        self._card_secondary_value_labels: Dict[str, tk.Label] = {}
         self._card_note_labels: Dict[str, tk.Label] = {}
         self._detail_value_labels: Dict[str, tk.Label] = {}
         self._detail_header_label: Optional[tk.Label] = None
@@ -558,8 +578,8 @@ class ShellApp:
         self._suppress_tree_select_event = False
 
         self.root.title("Autostop VPN Control")
-        self.root.geometry("1820x1020")
-        self.root.minsize(1620, 940)
+        self.root.geometry("1680x940")
+        self.root.minsize(1320, 780)
         self.root.configure(background=APP_BG)
 
         self._build_styles()
@@ -583,21 +603,21 @@ class ShellApp:
         except tk.TclError:  # pragma: no cover - theme availability varies
             pass
         style.configure("Shell.TFrame", background=APP_BG)
-        style.configure("Shell.TLabel", background=APP_BG, foreground=TEXT_PRIMARY, font=("Consolas", 10))
-        style.configure("ShellTitle.TLabel", background=PANEL_BG, foreground=TEXT_PRIMARY, font=("Consolas", 19, "bold"))
+        style.configure("Shell.TLabel", background=APP_BG, foreground=TEXT_PRIMARY, font=(FONT_UI, 10))
+        style.configure("ShellTitle.TLabel", background=PANEL_BG, foreground=TEXT_PRIMARY, font=(FONT_UI, 19, "bold"))
         style.configure("ShellSection.TLabelframe", background=PANEL_BG, foreground=TEXT_PRIMARY)
         style.configure(
             "ShellSection.TLabelframe.Label",
             background=PANEL_BG,
             foreground=TEXT_PRIMARY,
-            font=("Consolas", 9, "bold"),
+            font=(FONT_UI, 9, "bold"),
         )
-        style.configure("ShellValue.TLabel", background=PANEL_BG, foreground=TEXT_PRIMARY, font=("Consolas", 11, "bold"))
-        style.configure("ShellSmall.TLabel", background=PANEL_BG, foreground=TEXT_MUTED, font=("Consolas", 9))
+        style.configure("ShellValue.TLabel", background=PANEL_BG, foreground=TEXT_PRIMARY, font=(FONT_UI, 11, "bold"))
+        style.configure("ShellSmall.TLabel", background=PANEL_BG, foreground=TEXT_MUTED, font=(FONT_UI, 9))
         style.configure(
             "Shell.Treeview",
-            font=("Consolas", 9),
-            rowheight=25,
+            font=(FONT_MONO, 9),
+            rowheight=27,
             background=PANEL_BG,
             fieldbackground=PANEL_BG,
             foreground=TEXT_PRIMARY,
@@ -605,9 +625,17 @@ class ShellApp:
         )
         style.configure(
             "Shell.Treeview.Heading",
-            font=("Consolas", 9, "bold"),
+            font=(FONT_UI, 9, "bold"),
             background=PANEL_ALT_BG,
             foreground=ACCENT,
+            relief="flat",
+        )
+        style.configure(
+            "Shell.Vertical.TScrollbar",
+            background=PANEL_ALT_BG,
+            troughcolor=INPUT_BG,
+            bordercolor=BORDER_BG,
+            arrowcolor=TEXT_MUTED,
             relief="flat",
         )
         style.map(
@@ -622,16 +650,16 @@ class ShellApp:
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
 
-        container = tk.Frame(root, bg=APP_BG, padx=12, pady=12)
+        container = tk.Frame(root, bg=APP_BG, padx=14, pady=14)
         container.grid(row=0, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
         container.rowconfigure(4, weight=1)
 
-        hero = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=6)
+        hero = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=14, pady=8)
         hero.grid(row=0, column=0, sticky="ew")
         hero.columnconfigure(0, weight=1)
         hero.columnconfigure(1, weight=0)
-        tk.Label(hero, text="AUTOSTOP VPN CONTROL", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 16, "bold")).grid(
+        tk.Label(hero, text="AUTOSTOP VPN CONTROL", bg=PANEL_BG, fg=TEXT_PRIMARY, font=(FONT_UI, 16, "bold")).grid(
             row=0, column=0, sticky="w"
         )
         self.updated_label = tk.Label(
@@ -639,7 +667,7 @@ class ShellApp:
             text=f"{HEADER_BASE_TEXT} • waiting for snapshot",
             bg=PANEL_BG,
             fg=TEXT_MUTED,
-            font=("Consolas", 7),
+            font=(FONT_MONO, 8),
             wraplength=980,
             justify="left",
             anchor="w",
@@ -664,7 +692,7 @@ class ShellApp:
             text="WAITING",
             bg=ACCENT_SOFT,
             fg=ACCENT,
-            font=("Consolas", 9, "bold"),
+            font=(FONT_UI, 9, "bold"),
             padx=10,
             pady=4,
         )
@@ -684,7 +712,7 @@ class ShellApp:
             highlightthickness=1,
             highlightbackground=BORDER_BG,
             highlightcolor=ACCENT,
-            font=("Consolas", 9, "bold"),
+            font=(FONT_UI, 9, "bold"),
             padx=8,
             pady=2,
         ).pack(side="left", padx=(0, 8))
@@ -701,46 +729,60 @@ class ShellApp:
             highlightthickness=1,
             highlightbackground=BORDER_BG,
             highlightcolor=ERROR_TEXT,
-            font=("Consolas", 9, "bold"),
+            font=(FONT_UI, 9, "bold"),
             padx=8,
             pady=2,
         ).pack(side="left")
 
         cards = tk.Frame(container, bg=APP_BG)
         cards.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        for idx in range(4):
+        for idx in range(5):
             cards.columnconfigure(idx, weight=1, uniform="cards")
         self._card_frames: Dict[str, tk.Frame] = {}
         self._card_value_labels.clear()
+        self._card_secondary_value_labels.clear()
         self._card_note_labels.clear()
         card_specs = [
-            ("channel", "КАНАЛ", ACCENT),
+            ("channel", "КАНАЛ", ACCENT, True),
             ("peers", "ПИРЫ", ACCENT_2),
+            ("server", "СЕРВЕР", "#7bd88f"),
             ("leader", "ЛИДЕР", "#f4b860"),
             ("snapshot", "СНИМОК", "#9b7cff"),
         ]
-        for idx, (key, title, accent) in enumerate(card_specs):
-            card, value_label, note_label = self._create_metric_card(cards, title, accent)
+        for idx, spec in enumerate(card_specs):
+            if len(spec) == 4:
+                key, title, accent, show_secondary = spec
+            else:
+                key, title, accent = spec
+                show_secondary = False
+            card, value_label, secondary_value_label, note_label = self._create_metric_card(
+                cards,
+                title,
+                accent,
+                show_secondary=show_secondary,
+            )
             card.grid(row=0, column=idx, sticky="nsew", padx=(0 if idx == 0 else 8, 0))
             self._card_frames[key] = card
             self._card_value_labels[key] = value_label
+            if secondary_value_label is not None:
+                self._card_secondary_value_labels[key] = secondary_value_label
             self._card_note_labels[key] = note_label
 
-        trend_card = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=4)
+        trend_card = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=11, pady=6)
         trend_card.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         trend_card.columnconfigure(0, weight=1)
         trend_card.columnconfigure(1, weight=0)
         trend_header = tk.Frame(trend_card, bg=PANEL_BG)
         trend_header.grid(row=0, column=0, columnspan=2, sticky="ew")
         trend_header.columnconfigure(0, weight=1)
-        tk.Label(trend_header, text="ГРАФИК НАГРУЗКИ", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 12, "bold")).grid(
+        tk.Label(trend_header, text="ЖИВОЙ ТРАФИК", bg=PANEL_BG, fg=TEXT_PRIMARY, font=(FONT_UI, 12, "bold")).grid(
             row=0, column=0, sticky="w"
         )
-        self._trend_value_label = tk.Label(trend_header, text="—", bg=PANEL_BG, fg=ACCENT, font=("Consolas", 10, "bold"))
+        self._trend_value_label = tk.Label(trend_header, text="—", bg=PANEL_BG, fg=ACCENT, font=(FONT_MONO, 9, "bold"))
         self._trend_value_label.grid(row=0, column=1, sticky="e")
         self._trend_canvas = tk.Canvas(
             trend_card,
-            height=164,
+            height=142,
             bg=INPUT_BG,
             highlightthickness=1,
             highlightbackground=BORDER_BG,
@@ -751,7 +793,7 @@ class ShellApp:
         filter_bar = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=6)
         filter_bar.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         filter_bar.columnconfigure(1, weight=1)
-        tk.Label(filter_bar, text="ПОИСК", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9, "bold")).grid(
+        tk.Label(filter_bar, text="ПОИСК", bg=PANEL_BG, fg=TEXT_MUTED, font=(FONT_UI, 9, "bold")).grid(
             row=0, column=0, sticky="w", padx=(0, 8)
         )
         search_entry = tk.Entry(
@@ -765,7 +807,7 @@ class ShellApp:
             highlightthickness=1,
             highlightbackground=BORDER_BG,
             highlightcolor=ACCENT,
-            font=("Consolas", 10),
+            font=(FONT_UI, 10),
         )
         search_entry.grid(row=0, column=1, sticky="ew")
         search_entry.insert(0, "")
@@ -778,7 +820,7 @@ class ShellApp:
             activebackground=PANEL_BG,
             activeforeground=TEXT_PRIMARY,
             selectcolor=PANEL_BG,
-            font=("Consolas", 9),
+            font=(FONT_UI, 9),
         ).grid(row=0, column=2, sticky="w", padx=(12, 0))
         tk.Button(
             filter_bar,
@@ -793,17 +835,17 @@ class ShellApp:
             highlightthickness=1,
             highlightbackground=BORDER_BG,
             highlightcolor=ACCENT,
-            font=("Consolas", 9, "bold"),
+            font=(FONT_UI, 9, "bold"),
             padx=10,
             pady=4,
         ).grid(row=0, column=3, sticky="e", padx=(12, 0))
-        self.visible_count_label = tk.Label(filter_bar, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9))
+        self.visible_count_label = tk.Label(filter_bar, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=(FONT_MONO, 8))
         self.visible_count_label.grid(row=0, column=4, sticky="e", padx=(12, 0))
 
         main = tk.Frame(container, bg=APP_BG)
         main.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
-        main.columnconfigure(0, weight=5)
-        main.columnconfigure(1, weight=1)
+        main.columnconfigure(0, weight=4)
+        main.columnconfigure(1, weight=1, minsize=360)
         main.rowconfigure(0, weight=1)
 
         left = tk.Frame(main, bg=APP_BG)
@@ -818,33 +860,33 @@ class ShellApp:
         table_header = tk.Frame(table_card, bg=PANEL_BG)
         table_header.grid(row=0, column=0, sticky="ew")
         table_header.columnconfigure(0, weight=1)
-        tk.Label(table_header, text="ПИРЫ", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 12, "bold")).grid(
+        tk.Label(table_header, text="ПИРЫ", bg=PANEL_BG, fg=TEXT_PRIMARY, font=(FONT_UI, 12, "bold")).grid(
             row=0, column=0, sticky="w"
         )
-        self.table_status_label = tk.Label(table_header, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9))
+        self.table_status_label = tk.Label(table_header, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=(FONT_MONO, 8))
         self.table_status_label.grid(row=0, column=1, sticky="e")
 
         columns = ("name", "location", "active", "current", "share", "today", "total", "handshake")
         self.peer_tree = ttk.Treeview(table_card, columns=columns, show="headings", style="Shell.Treeview", selectmode="browse")
         headings = {
-            "name": "ИМЯ",
+            "name": "ПИР",
             "location": "ЛОКАЦИЯ",
-            "active": "LIVE",
+            "active": "СТАТУС",
             "current": "ПОТОК",
             "share": "ДОЛЯ",
             "today": "СЕГОДНЯ",
             "total": "ВСЕГО",
-            "handshake": "Handshake",
+            "handshake": "ПОСЛ. СВЯЗЬ",
         }
         widths = {
-            "name": 190,
-            "location": 240,
-            "active": 72,
-            "current": 130,
-            "share": 88,
-            "today": 120,
-            "total": 120,
-            "handshake": 110,
+            "name": 180,
+            "location": 220,
+            "active": 82,
+            "current": 120,
+            "share": 78,
+            "today": 112,
+            "total": 112,
+            "handshake": 112,
         }
         for column in columns:
             self.peer_tree.heading(column, text=headings[column])
@@ -852,7 +894,7 @@ class ShellApp:
         self.peer_tree.tag_configure("active", background=ROW_ACTIVE_BG)
         self.peer_tree.tag_configure("inactive", background=ROW_INACTIVE_BG)
         self.peer_tree.bind("<<TreeviewSelect>>", self._on_peer_tree_select)
-        peer_scroll = ttk.Scrollbar(table_card, orient="vertical", command=self.peer_tree.yview)
+        peer_scroll = ttk.Scrollbar(table_card, orient="vertical", command=self.peer_tree.yview, style="Shell.Vertical.TScrollbar")
         self.peer_tree.configure(yscrollcommand=peer_scroll.set)
         self.peer_tree.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         peer_scroll.grid(row=1, column=1, sticky="ns", pady=(8, 0))
@@ -865,7 +907,7 @@ class ShellApp:
         detail_card = tk.Frame(right, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=9, pady=9)
         detail_card.grid(row=0, column=0, sticky="nsew")
         detail_card.columnconfigure(0, weight=1)
-        tk.Label(detail_card, text="ВЫБРАННЫЙ ПИР", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 12, "bold")).grid(
+        tk.Label(detail_card, text="ВЫБРАННЫЙ ПИР", bg=PANEL_BG, fg=TEXT_PRIMARY, font=(FONT_UI, 12, "bold")).grid(
             row=0, column=0, sticky="w"
         )
         self._detail_header_label = tk.Label(
@@ -873,7 +915,7 @@ class ShellApp:
             text="ВЫБЕРИТЕ СТРОКУ В ТАБЛИЦЕ",
             bg=PANEL_BG,
             fg=TEXT_PRIMARY,
-            font=("Consolas", 15, "bold"),
+            font=(FONT_MONO, 15, "bold"),
             wraplength=360,
             justify="left",
             anchor="w",
@@ -884,7 +926,7 @@ class ShellApp:
             text="здесь будет показана локация, endpoint, трафик и MTU выбранного пира.",
             bg=PANEL_BG,
             fg=TEXT_MUTED,
-            font=("Consolas", 8),
+            font=(FONT_UI, 8),
             wraplength=360,
             justify="left",
             anchor="w",
@@ -895,7 +937,7 @@ class ShellApp:
             text="",
             bg=ACCENT_SOFT,
             fg=ACCENT,
-            font=("Consolas", 9, "bold"),
+            font=(FONT_UI, 9, "bold"),
             wraplength=360,
             justify="left",
             anchor="w",
@@ -923,14 +965,14 @@ class ShellApp:
             ("public_key_short", "КЛЮЧ"),
         ]
         for row_index, (key, title) in enumerate(detail_rows):
-            label = tk.Label(details_grid, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 8, "bold"), anchor="w")
+            label = tk.Label(details_grid, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=(FONT_UI, 8, "bold"), anchor="w")
             label.grid(row=row_index, column=0, sticky="w", pady=2)
             value = tk.Label(
                 details_grid,
                 text="—",
                 bg=PANEL_BG,
                 fg=TEXT_PRIMARY,
-                font=("Consolas", 8),
+                font=(FONT_MONO, 8),
                 wraplength=340,
                 justify="left",
                 anchor="w",
@@ -941,23 +983,42 @@ class ShellApp:
         footer_row = tk.Frame(container, bg=APP_BG)
         footer_row.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         footer_row.columnconfigure(0, weight=1)
-        self.footer_label = tk.Label(footer_row, text="", bg=APP_BG, fg=TEXT_MUTED, font=("Consolas", 9))
+        self.footer_label = tk.Label(footer_row, text="", bg=APP_BG, fg=TEXT_MUTED, font=(FONT_MONO, 8))
         self.footer_label.grid(row=0, column=0, sticky="w")
-        self.connection_label = tk.Label(footer_row, text="", bg=APP_BG, fg=TEXT_MUTED, font=("Consolas", 9))
+        self.connection_label = tk.Label(footer_row, text="", bg=APP_BG, fg=TEXT_MUTED, font=(FONT_MONO, 8))
         self.connection_label.grid(row=0, column=1, sticky="e")
 
-    def _create_metric_card(self, parent: tk.Frame, title: str, accent_color: str) -> tuple[tk.Frame, tk.Label, tk.Label]:
+    def _create_metric_card(
+        self,
+        parent: tk.Frame,
+        title: str,
+        accent_color: str,
+        show_secondary_value: bool = False,
+    ) -> tuple[tk.Frame, tk.Label, Optional[tk.Label], tk.Label]:
         card = tk.Frame(parent, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1)
-        accent = tk.Frame(card, bg=accent_color, width=5)
+        accent = tk.Frame(card, bg=accent_color, width=4)
         accent.pack(side="left", fill="y")
-        body = tk.Frame(card, bg=PANEL_BG, padx=12, pady=10)
+        body = tk.Frame(card, bg=PANEL_BG, padx=11, pady=9)
         body.pack(side="left", fill="both", expand=True)
-        tk.Label(body, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 8, "bold")).pack(anchor="w")
-        value_label = tk.Label(body, text="—", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 14, "bold"))
-        value_label.pack(anchor="w", pady=(4, 0))
-        note_label = tk.Label(body, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9), wraplength=280, justify="left")
+        tk.Label(body, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=(FONT_UI, 8, "bold")).pack(anchor="w")
+        value_row = tk.Frame(body, bg=PANEL_BG)
+        value_row.pack(fill="x", pady=(4, 0))
+        value_label = tk.Label(value_row, text="—", bg=PANEL_BG, fg=TEXT_PRIMARY, font=(FONT_MONO, 13, "bold"))
+        value_label.pack(side="left", anchor="w")
+        secondary_value_label: Optional[tk.Label] = None
+        if show_secondary_value:
+            secondary_value_label = tk.Label(
+                value_row,
+                text="—",
+                bg=PANEL_BG,
+                fg=ACCENT_2,
+                font=(FONT_MONO, 13, "bold"),
+                anchor="e",
+            )
+            secondary_value_label.pack(side="right", anchor="e")
+        note_label = tk.Label(body, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=(FONT_MONO, 8), wraplength=260, justify="left")
         note_label.pack(anchor="w", pady=(4, 0))
-        return card, value_label, note_label
+        return card, value_label, secondary_value_label, note_label
 
     def _set_status_mode(self, mode: str) -> None:
         self._status_mode = mode
@@ -1024,7 +1085,12 @@ class ShellApp:
         if signature == self._last_trend_signature:
             trend_value_label = getattr(self, "_trend_value_label", None)
             if trend_value_label is not None:
-                trend_value_label.configure(text=f"СУММА {collector.format_rate(current_bps)} | ЗАГРУЗКА {utilization:.1f}%")
+                trend_value_label.configure(
+                    text=(
+                        f"сейчас {collector.format_rate(current_bps)} | "
+                        f"пик {model.get('daily_peak', 'н/д')} | загрузка {utilization:.1f}%"
+                    )
+                )
             return
 
         if current_bps > 0:
@@ -1040,8 +1106,7 @@ class ShellApp:
             self._traffic_history = history
 
         history_max = max(self._traffic_history) if self._traffic_history else 1.0
-        if capacity_bps > history_max:
-            history_max = capacity_bps
+        history_max = max(history_max, current_bps, rx_bps, tx_bps)
         history_max = max(history_max, 1.0)
 
         canvas.delete("all")
@@ -1052,14 +1117,13 @@ class ShellApp:
         plot_height = max(height - inner_pad * 2, 1)
         self._trend_phase = (self._trend_phase + 6) % max(plot_width, 1)
 
-        # matrix-like grid
-        grid_color = "#0c2024"
-        glow_grid = "#0b2a1b"
-        for x in range(inner_pad, width - inner_pad + 1, 28):
+        grid_color = "#10252d"
+        glow_grid = "#103222"
+        for x in range(inner_pad, width - inner_pad + 1, 42):
             canvas.create_line(x, inner_pad + 14, x, height - inner_pad, fill=grid_color, width=1)
-        for y in range(inner_pad + 18, height - inner_pad + 1, 22):
+        for y in range(inner_pad + 18, height - inner_pad + 1, 28):
             canvas.create_line(inner_pad, y, width - inner_pad, y, fill=grid_color, width=1)
-        for x in range(inner_pad + 14, width - inner_pad + 1, 84):
+        for x in range(inner_pad + 21, width - inner_pad + 1, 126):
             canvas.create_line(x, inner_pad + 14, x, height - inner_pad, fill=glow_grid, width=1, dash=(2, 6))
 
         def _draw_metric_bar(y_top: int, label: str, value_bps: float, limit_bps: float, fill_color: str, outline: str) -> None:
@@ -1089,11 +1153,12 @@ class ShellApp:
         tx_color = "#36e08f" if tx_bps < capacity_bps * 0.6 else "#7cf2b6"
         total_color = ACCENT if utilization < 80 else (STATUS_TEXT if utilization < 95 else ERROR_TEXT)
 
+        live_flow_limit = max(current_bps, rx_bps, tx_bps, 1.0)
         _draw_metric_bar(
             inner_pad + 12,
             "RX / входящий",
             rx_bps,
-            capacity_bps if capacity_bps > 0 else max(rx_bps, 1.0),
+            live_flow_limit,
             rx_color,
             BORDER_BG,
         )
@@ -1101,7 +1166,7 @@ class ShellApp:
             inner_pad + 36,
             "TX / исходящий",
             tx_bps,
-            capacity_bps if capacity_bps > 0 else max(tx_bps, 1.0),
+            live_flow_limit,
             tx_color,
             BORDER_BG,
         )
@@ -1125,7 +1190,7 @@ class ShellApp:
             anchor="e",
             fill=TEXT_MUTED,
             font=("Consolas", 8, "bold"),
-            text=f"Суммарно {collector.format_rate(current_bps)} / лимит {collector.format_rate(capacity_bps)}",
+            text=f"Канал {collector.format_rate(current_bps)} / лимит {collector.format_rate(capacity_bps)}",
         )
 
         # sparkline
@@ -1173,8 +1238,14 @@ class ShellApp:
 
         trend_value_label = getattr(self, "_trend_value_label", None)
         if trend_value_label is not None:
-            trend_value_label.configure(text=f"СУММА {collector.format_rate(current_bps)} | ЗАГРУЗКА {utilization:.1f}%")
+            trend_value_label.configure(
+                text=(
+                    f"сейчас {collector.format_rate(current_bps)} | "
+                    f"пик {model.get('daily_peak', 'н/д')} | загрузка {utilization:.1f}%"
+                )
+            )
         self._last_trend_signature = signature
+
     def _reset_filters(self) -> None:
         self._search_query.set("")
         self._active_only.set(False)
@@ -1190,16 +1261,27 @@ class ShellApp:
         visible_count = len(self._filtered_peer_rows)
         top_peer = peer_rows[0] if peer_rows else {}
         updated_label = str(model.get("updated_label", "—"))
+        updated_clock = str(model.get("updated_clock", "—"))
+        updated_day = str(model.get("updated_day", ""))
         age_label = str(model.get("age_label", "н/д"))
         refresh_seconds = _coerce_float(model.get("refresh_seconds"))
+        server_ping = str(model.get("server_ping", "н/д"))
+        server_load = str(model.get("server_load", "н/д"))
+        server_memory = str(model.get("server_memory", "н/д"))
 
-        self._card_value_labels["channel"].configure(text=f"{current_total} / {bandwidth_limit}")
+        self._card_value_labels["channel"].configure(text=current_total)
+        channel_secondary = self._card_secondary_value_labels.get("channel")
+        if channel_secondary is not None:
+            channel_secondary.configure(text=f"{bandwidth_utilization}")
         self._card_note_labels["channel"].configure(
-            text=f"UTIL {bandwidth_utilization} | HEADROOM {bandwidth_headroom}"
+            text=f"лимит {bandwidth_limit} | запас {bandwidth_headroom} | {bandwidth_utilization}"
         )
 
         self._card_value_labels["peers"].configure(text=f"{active_connections} / {total_peers}")
-        self._card_note_labels["peers"].configure(text=f"VISIBLE {visible_count} | FILTER {self._search_query.get() or 'ALL'}")
+        self._card_note_labels["peers"].configure(text=f"показано {visible_count} | фильтр {self._search_query.get() or 'все'}")
+
+        self._card_value_labels["server"].configure(text=server_ping)
+        self._card_note_labels["server"].configure(text=f"load {server_load} | mem {server_memory.split(' ', 1)[0]}")
 
         leader_name = str(top_peer.get("name", "—")) if top_peer else "—"
         leader_rate = str(top_peer.get("current", "—")) if top_peer else "—"
@@ -1209,8 +1291,8 @@ class ShellApp:
         leader_note_parts = [part for part in (leader_location, leader_rate, leader_share) if part]
         self._card_note_labels["leader"].configure(text=" | ".join(leader_note_parts))
 
-        self._card_value_labels["snapshot"].configure(text=updated_label)
-        self._card_note_labels["snapshot"].configure(text=f"AGE {age_label} | STEP {refresh_seconds:g}s")
+        self._card_value_labels["snapshot"].configure(text=updated_clock or updated_label)
+        self._card_note_labels["snapshot"].configure(text=f"{updated_day} | age {age_label} | шаг {refresh_seconds:g}s")
         self._render_trend_graph(model)
 
     def _apply_peer_filter(self) -> None:
@@ -1284,7 +1366,7 @@ class ShellApp:
         if not peer:
             self._detail_header_label.configure(text="ВЫБЕРИТЕ СТРОКУ В ТАБЛИЦЕ")
             self._detail_subtitle_label.configure(text="здесь будет показана локация, endpoint, трафик и MTU выбранного пира.")
-            self._detail_note_label.configure(text="")
+            self._detail_note_label.configure(text="", bg=ACCENT_SOFT, fg=ACCENT)
             for value_label in self._detail_value_labels.values():
                 value_label.configure(text="—")
             return
@@ -1310,10 +1392,11 @@ class ShellApp:
         total = str(peer.get("total", "—"))
         public_key_short = str(peer.get("public_key_short", "")) or "—"
         note = _peer_detail_note(peer)
+        note_bg, note_fg = (ACCENT_SOFT, ACCENT) if bool(peer.get("active_value")) else (STATUS_BG, TEXT_MUTED)
 
         self._detail_header_label.configure(text=name or "БЕЗ ИМЕНИ")
         self._detail_subtitle_label.configure(text=f"{location} | {endpoint}")
-        self._detail_note_label.configure(text=note)
+        self._detail_note_label.configure(text=note, bg=note_bg, fg=note_fg)
         self._detail_value_labels["location"].configure(text=location)
         self._detail_value_labels["endpoint"].configure(text=endpoint)
         self._detail_value_labels["path_mtu"].configure(text=path_mtu)
@@ -1466,8 +1549,10 @@ class ShellApp:
                 status_text = f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
                 self._status_base_text = status_text
                 self.updated_label.configure(text=status_text)
-                self._card_value_labels["snapshot"].configure(text=snapshot_label)
-                self._card_note_labels["snapshot"].configure(text=f"AGE {age_label} | STEP {refresh_seconds:g}s")
+                self._card_value_labels["snapshot"].configure(text=str(model.get("updated_clock", snapshot_label)))
+                self._card_note_labels["snapshot"].configure(
+                    text=f"{model.get('updated_day', '')} | age {age_label} | шаг {refresh_seconds:g}s"
+                )
                 self._render_trend_graph(model)
                 self._set_warning_text(model.get("warnings", []))
                 self.connection_label.configure(text="LINK UP")
