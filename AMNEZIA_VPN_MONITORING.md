@@ -120,7 +120,7 @@ The collector reads these environment variables:
 4. Copy `amnezia_server_info.json` to `/var/lib/amnezia-traffic/server_info.json` and adjust provider or billing notes if needed.
 5. If the provider cap is known, set `bandwidth_limit_mbps`; otherwise the collector will fall back to the default network interface speed when available.
 6. Run one manual collector execution.
-7. Reload `systemd`, restart the collector timer, enable the localhost dashboard service and verify `127.0.0.1:18080`.
+7. Reload `systemd`, stop `amnezia-traffic-collector.timer`, start or restart `amnezia-dashboard.service`, then start the timer again and verify `127.0.0.1:18080`.
 8. Check the `Transport:` line in the summary output. If the live `awg0` MTU is above the recommended value, lower it and re-test Telegram voice playback.
 9. The collector timer refreshes every second to keep the shell snapshot fresh while the app is open.
 10. Open the shell app from Windows; the SSH tunnel is handled inside the app.
@@ -128,15 +128,17 @@ The collector reads these environment variables:
 For this deployment, the chosen value is `1380`.
 The MTU probe result is cached for an hour by default so the collector does not re-run `ping -M do` on every cycle.
 Geo labels for peer endpoints are cached too, so normal refresh cycles stay light.
+Because the timer runs every second, `amnezia-dashboard.service` should be restarted while the collector timer is stopped. Otherwise systemd can leave the dashboard start job waiting behind a continuously triggered collector service.
 
 ## Rollback
 
 1. Stop `amnezia-dashboard.service`.
-2. Restore the previous `/usr/local/bin/amnezia_traffic_collector.py`.
-3. Restore the previous systemd unit files.
-4. Restore `/var/lib/amnezia-traffic` from backup if needed.
-5. Run `systemctl daemon-reload`.
-6. Restart `amnezia-traffic-collector.timer`. The timer is expected to run every second in the current setup.
+2. Stop `amnezia-traffic-collector.timer` while replacing files.
+3. Restore the previous `/usr/local/bin/amnezia_traffic_collector.py`.
+4. Restore the previous systemd unit files.
+5. Restore `/var/lib/amnezia-traffic` from backup if needed.
+6. Run `systemctl daemon-reload`.
+7. Start `amnezia-dashboard.service`, then restart `amnezia-traffic-collector.timer`. The timer is expected to run every second in the current setup.
 
 Rollback does not touch the VPN container itself.
 
