@@ -49,25 +49,26 @@ _SSH_CONNECT_TIMEOUT_SECONDS = 5
 _SSH_TUNNEL_WAIT_SECONDS = 10.0
 _DEBUG_LOG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AutostopVPN" / "shell_errors.log"
 _SSH_LOG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AutostopVPN" / "ssh_tunnel.log"
-APP_BG = "#06090d"
-PANEL_BG = "#0b1116"
-PANEL_ALT_BG = "#0e151b"
-BORDER_BG = "#1c2831"
-TEXT_PRIMARY = "#dfe9de"
-TEXT_MUTED = "#7d9099"
-ACCENT = "#36e08f"
-ACCENT_SOFT = "#123425"
-ACCENT_2 = "#48bfff"
-STATUS_BG = "#0d1419"
-STATUS_TEXT = "#96a6b0"
-WARN_BG = "#1d1214"
+HEADER_BASE_TEXT = "ssh tunnel // live peer telemetry // matrix load"
+APP_BG = "#020508"
+PANEL_BG = "#071016"
+PANEL_ALT_BG = "#09141a"
+BORDER_BG = "#17303a"
+TEXT_PRIMARY = "#e8f7ea"
+TEXT_MUTED = "#77a38a"
+ACCENT = "#00ff88"
+ACCENT_SOFT = "#072917"
+ACCENT_2 = "#3bf0ff"
+STATUS_BG = "#071018"
+STATUS_TEXT = "#8fe7b0"
+WARN_BG = "#1a120d"
 WARN_TEXT = "#ff9b9b"
-ERROR_BG = "#2a1214"
+ERROR_BG = "#221014"
 ERROR_TEXT = "#ff9b9b"
-ROW_ACTIVE_BG = "#0f1913"
-ROW_INACTIVE_BG = "#0c1014"
-ROW_SELECTED_BG = "#163424"
-INPUT_BG = "#0c1218"
+ROW_ACTIVE_BG = "#0b1710"
+ROW_INACTIVE_BG = "#091017"
+ROW_SELECTED_BG = "#113725"
+INPUT_BG = "#071018"
 
 
 def _state_badge_colors(state_class: str) -> tuple[str, str]:
@@ -531,7 +532,7 @@ class ShellApp:
         self._ssh_process: Optional[subprocess.Popen[bytes]] = None
         self._refresh_results: "queue.Queue[tuple[str, object]]" = queue.Queue()
         self._traffic_history: List[float] = []
-        self._traffic_history_limit = 36
+        self._traffic_history_limit = 90
         self._all_peer_rows: List[Dict[str, object]] = []
         self._filtered_peer_rows: List[Dict[str, object]] = []
         self._peer_rows_by_key: Dict[str, Dict[str, object]] = {}
@@ -547,6 +548,8 @@ class ShellApp:
         self._trend_canvas: Optional[tk.Canvas] = None
         self._trend_value_label: Optional[tk.Label] = None
         self._trend_phase = 0
+        self._last_trend_signature: Optional[tuple] = None
+        self._status_base_text = HEADER_BASE_TEXT
         self._status_indicator_canvas: Optional[tk.Canvas] = None
         self._status_indicator_dot: Optional[int] = None
         self._status_blink_job: Optional[str] = None
@@ -555,8 +558,8 @@ class ShellApp:
         self._suppress_tree_select_event = False
 
         self.root.title("Autostop VPN Control")
-        self.root.geometry("1760x960")
-        self.root.minsize(1560, 880)
+        self.root.geometry("1820x1020")
+        self.root.minsize(1620, 940)
         self.root.configure(background=APP_BG)
 
         self._build_styles()
@@ -571,7 +574,7 @@ class ShellApp:
         self.root.report_callback_exception = self._report_callback_exception
 
         self._schedule_refresh_result_poll()
-        self.request_refresh()
+        self.root.after(50, self.request_refresh)
 
     def _build_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -619,31 +622,31 @@ class ShellApp:
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
 
-        container = tk.Frame(root, bg=APP_BG, padx=14, pady=14)
+        container = tk.Frame(root, bg=APP_BG, padx=12, pady=12)
         container.grid(row=0, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
         container.rowconfigure(4, weight=1)
 
-        hero = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=16, pady=8)
+        hero = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=6)
         hero.grid(row=0, column=0, sticky="ew")
         hero.columnconfigure(0, weight=1)
         hero.columnconfigure(1, weight=0)
-        tk.Label(hero, text="AUTOSTOP VPN CONTROL", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 18, "bold")).grid(
+        tk.Label(hero, text="AUTOSTOP VPN CONTROL", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 16, "bold")).grid(
             row=0, column=0, sticky="w"
         )
         self.updated_label = tk.Label(
             hero,
-            text="ssh tunnel / live peer telemetry / bandwidth monitor • waiting for snapshot",
+            text=f"{HEADER_BASE_TEXT} • waiting for snapshot",
             bg=PANEL_BG,
             fg=TEXT_MUTED,
-            font=("Consolas", 8),
-            wraplength=1160,
+            font=("Consolas", 7),
+            wraplength=980,
             justify="left",
             anchor="w",
         )
-        self.updated_label.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.updated_label.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         status_panel = tk.Frame(hero, bg=PANEL_BG)
-        status_panel.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(16, 0))
+        status_panel.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0))
         status_top = tk.Frame(status_panel, bg=PANEL_BG)
         status_top.grid(row=0, column=0, sticky="e")
         self._status_indicator_canvas = tk.Canvas(
@@ -667,7 +670,7 @@ class ShellApp:
         )
         self.state_label.pack(side="left")
         status_actions = tk.Frame(status_panel, bg=PANEL_BG)
-        status_actions.grid(row=1, column=0, sticky="e", pady=(8, 0))
+        status_actions.grid(row=1, column=0, sticky="e", pady=(6, 0))
         tk.Button(
             status_actions,
             text="ОБНОВИТЬ",
@@ -682,8 +685,8 @@ class ShellApp:
             highlightbackground=BORDER_BG,
             highlightcolor=ACCENT,
             font=("Consolas", 9, "bold"),
-            padx=10,
-            pady=3,
+            padx=8,
+            pady=2,
         ).pack(side="left", padx=(0, 8))
         tk.Button(
             status_actions,
@@ -699,12 +702,12 @@ class ShellApp:
             highlightbackground=BORDER_BG,
             highlightcolor=ERROR_TEXT,
             font=("Consolas", 9, "bold"),
-            padx=10,
-            pady=3,
+            padx=8,
+            pady=2,
         ).pack(side="left")
 
         cards = tk.Frame(container, bg=APP_BG)
-        cards.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        cards.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         for idx in range(4):
             cards.columnconfigure(idx, weight=1, uniform="cards")
         self._card_frames: Dict[str, tk.Frame] = {}
@@ -723,8 +726,8 @@ class ShellApp:
             self._card_value_labels[key] = value_label
             self._card_note_labels[key] = note_label
 
-        trend_card = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=8)
-        trend_card.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        trend_card = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=4)
+        trend_card.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         trend_card.columnconfigure(0, weight=1)
         trend_card.columnconfigure(1, weight=0)
         trend_header = tk.Frame(trend_card, bg=PANEL_BG)
@@ -737,16 +740,16 @@ class ShellApp:
         self._trend_value_label.grid(row=0, column=1, sticky="e")
         self._trend_canvas = tk.Canvas(
             trend_card,
-            height=110,
+            height=164,
             bg=INPUT_BG,
             highlightthickness=1,
             highlightbackground=BORDER_BG,
             bd=0,
         )
-        self._trend_canvas.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self._trend_canvas.grid(row=1, column=0, sticky="ew", pady=(6, 0))
 
-        filter_bar = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=8)
-        filter_bar.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        filter_bar = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=6)
+        filter_bar.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         filter_bar.columnconfigure(1, weight=1)
         tk.Label(filter_bar, text="ПОИСК", bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9, "bold")).grid(
             row=0, column=0, sticky="w", padx=(0, 8)
@@ -798,17 +801,17 @@ class ShellApp:
         self.visible_count_label.grid(row=0, column=4, sticky="e", padx=(12, 0))
 
         main = tk.Frame(container, bg=APP_BG)
-        main.grid(row=4, column=0, sticky="nsew", pady=(10, 0))
-        main.columnconfigure(0, weight=4)
+        main.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
+        main.columnconfigure(0, weight=5)
         main.columnconfigure(1, weight=1)
         main.rowconfigure(0, weight=1)
 
         left = tk.Frame(main, bg=APP_BG)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         left.rowconfigure(0, weight=1)
         left.columnconfigure(0, weight=1)
 
-        table_card = tk.Frame(left, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=12)
+        table_card = tk.Frame(left, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=10)
         table_card.grid(row=0, column=0, sticky="nsew")
         table_card.columnconfigure(0, weight=1)
         table_card.rowconfigure(1, weight=1)
@@ -851,15 +854,15 @@ class ShellApp:
         self.peer_tree.bind("<<TreeviewSelect>>", self._on_peer_tree_select)
         peer_scroll = ttk.Scrollbar(table_card, orient="vertical", command=self.peer_tree.yview)
         self.peer_tree.configure(yscrollcommand=peer_scroll.set)
-        self.peer_tree.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
-        peer_scroll.grid(row=1, column=1, sticky="ns", pady=(10, 0))
+        self.peer_tree.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        peer_scroll.grid(row=1, column=1, sticky="ns", pady=(8, 0))
 
         right = tk.Frame(main, bg=APP_BG)
         right.grid(row=0, column=1, sticky="nsew")
         right.rowconfigure(0, weight=1)
         right.columnconfigure(0, weight=1)
 
-        detail_card = tk.Frame(right, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=10)
+        detail_card = tk.Frame(right, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=9, pady=9)
         detail_card.grid(row=0, column=0, sticky="nsew")
         detail_card.columnconfigure(0, weight=1)
         tk.Label(detail_card, text="ВЫБРАННЫЙ ПИР", bg=PANEL_BG, fg=TEXT_PRIMARY, font=("Consolas", 12, "bold")).grid(
@@ -870,7 +873,7 @@ class ShellApp:
             text="ВЫБЕРИТЕ СТРОКУ В ТАБЛИЦЕ",
             bg=PANEL_BG,
             fg=TEXT_PRIMARY,
-            font=("Consolas", 16, "bold"),
+            font=("Consolas", 15, "bold"),
             wraplength=360,
             justify="left",
             anchor="w",
@@ -881,7 +884,7 @@ class ShellApp:
             text="здесь будет показана локация, endpoint, трафик и MTU выбранного пира.",
             bg=PANEL_BG,
             fg=TEXT_MUTED,
-            font=("Consolas", 9),
+            font=("Consolas", 8),
             wraplength=360,
             justify="left",
             anchor="w",
@@ -896,13 +899,13 @@ class ShellApp:
             wraplength=360,
             justify="left",
             anchor="w",
-            padx=10,
-            pady=8,
+            padx=8,
+            pady=6,
         )
-        self._detail_note_label.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        self._detail_note_label.grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
         details_grid = tk.Frame(detail_card, bg=PANEL_BG)
-        details_grid.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+        details_grid.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         details_grid.columnconfigure(1, weight=1)
         detail_rows = [
             ("location", "ЛОКАЦИЯ"),
@@ -920,23 +923,23 @@ class ShellApp:
             ("public_key_short", "КЛЮЧ"),
         ]
         for row_index, (key, title) in enumerate(detail_rows):
-            label = tk.Label(details_grid, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 9, "bold"), anchor="w")
-            label.grid(row=row_index, column=0, sticky="w", pady=3)
+            label = tk.Label(details_grid, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=("Consolas", 8, "bold"), anchor="w")
+            label.grid(row=row_index, column=0, sticky="w", pady=2)
             value = tk.Label(
                 details_grid,
                 text="—",
                 bg=PANEL_BG,
                 fg=TEXT_PRIMARY,
-                font=("Consolas", 9),
+                font=("Consolas", 8),
                 wraplength=340,
                 justify="left",
                 anchor="w",
             )
-            value.grid(row=row_index, column=1, sticky="ew", pady=3, padx=(10, 0))
+            value.grid(row=row_index, column=1, sticky="ew", pady=2, padx=(8, 0))
             self._detail_value_labels[key] = value
 
         footer_row = tk.Frame(container, bg=APP_BG)
-        footer_row.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        footer_row.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         footer_row.columnconfigure(0, weight=1)
         self.footer_label = tk.Label(footer_row, text="", bg=APP_BG, fg=TEXT_MUTED, font=("Consolas", 9))
         self.footer_label.grid(row=0, column=0, sticky="w")
@@ -995,7 +998,7 @@ class ShellApp:
                 self.root.after_cancel(self._status_blink_job)
             except Exception:
                 pass
-        self._status_blink_job = self.root.after(500, self._schedule_status_indicator_tick)
+        self._status_blink_job = self.root.after(350, self._schedule_status_indicator_tick)
 
     def _render_trend_graph(self, model: Dict[str, object]) -> None:
         canvas = getattr(self, "_trend_canvas", None)
@@ -1010,6 +1013,19 @@ class ShellApp:
         utilization = _coerce_float(utilization_value) if utilization_value is not None else (
             (current_bps / capacity_bps * 100.0) if capacity_bps > 0 else 0.0
         )
+        signature = (
+            current_bps,
+            rx_bps,
+            tx_bps,
+            capacity_bps,
+            round(utilization, 2),
+            str(model.get("updated_label", "")),
+        )
+        if signature == self._last_trend_signature:
+            trend_value_label = getattr(self, "_trend_value_label", None)
+            if trend_value_label is not None:
+                trend_value_label.configure(text=f"СУММА {collector.format_rate(current_bps)} | ЗАГРУЗКА {utilization:.1f}%")
+            return
 
         if current_bps > 0:
             history = list(getattr(self, "_traffic_history", []))
@@ -1031,44 +1047,59 @@ class ShellApp:
         canvas.delete("all")
         width = max(int(canvas.winfo_width() or 0), 1)
         height = max(int(canvas.winfo_height() or 0), 1)
-        inner_pad = 10
+        inner_pad = 8
         plot_width = max(width - inner_pad * 2, 1)
         plot_height = max(height - inner_pad * 2, 1)
-        self._trend_phase = (self._trend_phase + 2) % max(plot_width, 1)
+        self._trend_phase = (self._trend_phase + 6) % max(plot_width, 1)
 
-        # titles and live readouts
-        canvas.create_text(inner_pad, inner_pad + 2, anchor="nw", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text="ВХОДЯЩИЙ")
-        canvas.create_text(width // 2, inner_pad + 2, anchor="n", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text="ИСХОДЯЩИЙ")
-        canvas.create_text(width - inner_pad, inner_pad + 2, anchor="ne", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text="СУММА / ЛИМИТ")
+        # matrix-like grid
+        grid_color = "#0c2024"
+        glow_grid = "#0b2a1b"
+        for x in range(inner_pad, width - inner_pad + 1, 28):
+            canvas.create_line(x, inner_pad + 14, x, height - inner_pad, fill=grid_color, width=1)
+        for y in range(inner_pad + 18, height - inner_pad + 1, 22):
+            canvas.create_line(inner_pad, y, width - inner_pad, y, fill=grid_color, width=1)
+        for x in range(inner_pad + 14, width - inner_pad + 1, 84):
+            canvas.create_line(x, inner_pad + 14, x, height - inner_pad, fill=glow_grid, width=1, dash=(2, 6))
 
         def _draw_metric_bar(y_top: int, label: str, value_bps: float, limit_bps: float, fill_color: str, outline: str) -> None:
-            label_width = 146
-            value_width = 122
+            label_width = 162
+            value_width = 128
             bar_left = inner_pad + label_width
             bar_right = width - inner_pad - value_width
             bar_width = max(bar_right - bar_left, 1)
             ratio = value_bps / limit_bps if limit_bps > 0 else 0.0
             fill = max(0.0, min(ratio, 1.0))
-            canvas.create_rectangle(bar_left, y_top, bar_right, y_top + 14, outline=outline, fill="#0a1015")
-            canvas.create_rectangle(bar_left, y_top, bar_left + int(bar_width * fill), y_top + 14, outline="", fill=fill_color)
-            canvas.create_text(inner_pad, y_top + 7, anchor="w", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text=label)
-            canvas.create_text(width - inner_pad, y_top + 7, anchor="e", fill=TEXT_PRIMARY, font=("Consolas", 8), text=collector.format_rate(value_bps))
+            label_y = y_top
+            bar_top = y_top + 9
+            bar_bottom = bar_top + 10
+            canvas.create_text(inner_pad, label_y, anchor="w", fill=TEXT_MUTED, font=("Consolas", 8, "bold"), text=label)
+            canvas.create_rectangle(bar_left, bar_top, bar_right, bar_bottom, outline=outline, fill="#0a1015")
+            canvas.create_rectangle(bar_left, bar_top, bar_left + int(bar_width * fill), bar_bottom, outline="", fill=fill_color)
+            canvas.create_text(
+                width - inner_pad,
+                bar_top + 5,
+                anchor="e",
+                fill=TEXT_PRIMARY,
+                font=("Consolas", 8),
+                text=collector.format_rate(value_bps),
+            )
 
         rx_color = "#48bfff" if rx_bps < capacity_bps * 0.6 else ACCENT
         tx_color = "#36e08f" if tx_bps < capacity_bps * 0.6 else "#7cf2b6"
         total_color = ACCENT if utilization < 80 else (STATUS_TEXT if utilization < 95 else ERROR_TEXT)
 
         _draw_metric_bar(
-            inner_pad + 18,
-            "Входящий поток",
+            inner_pad + 12,
+            "RX / входящий",
             rx_bps,
             capacity_bps if capacity_bps > 0 else max(rx_bps, 1.0),
             rx_color,
             BORDER_BG,
         )
         _draw_metric_bar(
-            inner_pad + 40,
-            "Исходящий поток",
+            inner_pad + 36,
+            "TX / исходящий",
             tx_bps,
             capacity_bps if capacity_bps > 0 else max(tx_bps, 1.0),
             tx_color,
@@ -1077,9 +1108,9 @@ class ShellApp:
 
         # capacity bar
         bar_fill = max(0.0, min(utilization / 100.0, 1.0))
-        bar_top = inner_pad + 66
-        bar_bottom = inner_pad + 80
-        canvas.create_rectangle(inner_pad, bar_top, width - inner_pad, bar_bottom, outline=BORDER_BG, fill="#0a1015")
+        bar_top = inner_pad + 60
+        bar_bottom = inner_pad + 72
+        canvas.create_rectangle(inner_pad, bar_top, width - inner_pad, bar_bottom, outline=BORDER_BG, fill="#081018")
         canvas.create_rectangle(
             inner_pad,
             bar_top,
@@ -1098,10 +1129,12 @@ class ShellApp:
         )
 
         # sparkline
-        spark_top = inner_pad + 90
+        spark_top = inner_pad + 82
         spark_bottom = height - inner_pad
         spark_height = max(spark_bottom - spark_top, 1)
         spark_width = max(plot_width, 1)
+        baseline_y = spark_bottom - 2
+        canvas.create_line(inner_pad, baseline_y, width - inner_pad, baseline_y, fill="#0f2730", width=1)
         if len(self._traffic_history) == 1:
             value = self._traffic_history[0]
             fill_height = int(spark_height * (value / history_max))
@@ -1111,29 +1144,37 @@ class ShellApp:
                 width - inner_pad,
                 spark_bottom,
                 outline="",
-                fill="#123425",
+                fill="#0f3a22",
             )
         else:
             points = []
+            fill_points = [inner_pad, spark_bottom]
             count = len(self._traffic_history)
             for idx, value in enumerate(self._traffic_history):
                 x = inner_pad + int((spark_width * idx) / max(count - 1, 1))
                 y = spark_bottom - int((value / history_max) * spark_height)
                 points.extend([x, y])
+                fill_points.extend([x, y])
+                stem_color = ACCENT if idx == count - 1 else "#0e4b2d"
+                canvas.create_line(x, baseline_y, x, y, fill=stem_color, width=2 if idx == count - 1 else 1)
             if len(points) >= 4:
-                canvas.create_line(*points, fill=ACCENT, width=2, smooth=True)
+                canvas.create_polygon(*fill_points, width=0, smooth=True, fill="#071f12")
+                canvas.create_line(*points, fill=ACCENT, width=3, smooth=True)
+                canvas.create_line(*points, fill="#113d2a", width=6, smooth=True)
 
         if self._traffic_history:
             cursor_x = inner_pad + self._trend_phase
             cursor_x = min(max(cursor_x, inner_pad), width - inner_pad)
-            canvas.create_line(cursor_x, spark_top, cursor_x, spark_bottom, fill="#2a3942", width=1, dash=(3, 4))
+            canvas.create_line(cursor_x, spark_top, cursor_x, spark_bottom, fill="#244c35", width=1, dash=(3, 4))
             latest = self._traffic_history[-1]
             latest_y = spark_bottom - int((latest / history_max) * spark_height)
-            canvas.create_oval(cursor_x - 3, latest_y - 3, cursor_x + 3, latest_y + 3, outline="", fill=ACCENT)
+            canvas.create_oval(cursor_x - 4, latest_y - 4, cursor_x + 4, latest_y + 4, outline="", fill=ACCENT)
+            canvas.create_oval(cursor_x - 7, latest_y - 7, cursor_x + 7, latest_y + 7, outline=ACCENT, width=1)
 
         trend_value_label = getattr(self, "_trend_value_label", None)
         if trend_value_label is not None:
             trend_value_label.configure(text=f"СУММА {collector.format_rate(current_bps)} | ЗАГРУЗКА {utilization:.1f}%")
+        self._last_trend_signature = signature
     def _reset_filters(self) -> None:
         self._search_query.set("")
         self._active_only.set(False)
@@ -1392,7 +1433,7 @@ class ShellApp:
         self._cancel_refresh_timer()
         self._refresh_in_flight = True
         self._set_status_mode("connecting")
-        self.updated_label.configure(text="ssh tunnel / live peer telemetry / bandwidth monitor • проверка ssh-туннеля и загрузка snapshot...")
+        self.updated_label.configure(text=f"{HEADER_BASE_TEXT} • проверка ssh-туннеля и загрузка snapshot...")
         threading.Thread(target=self._refresh_worker, daemon=True).start()
 
     def _refresh_worker(self) -> None:
@@ -1422,8 +1463,9 @@ class ShellApp:
             self._last_snapshot_label = snapshot_label
 
             if repeated_snapshot:
+                self._status_base_text = HEADER_BASE_TEXT
                 self.updated_label.configure(
-                    text=f"ssh tunnel / live peer telemetry / bandwidth monitor • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+                    text=f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
                 )
                 self._card_value_labels["snapshot"].configure(text=snapshot_label)
                 self._card_note_labels["snapshot"].configure(text=f"AGE {age_label} | STEP {refresh_seconds:g}s")
@@ -1442,8 +1484,9 @@ class ShellApp:
 
             self.root.title(f"Autostop VPN Control :: {str(model['bandwidth_state_label']).upper()}")
             self._set_status_mode("online")
+            self._status_base_text = HEADER_BASE_TEXT
             self.updated_label.configure(
-                text=f"ssh tunnel / live peer telemetry / bandwidth monitor • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+                text=f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
             )
             self._apply_peer_filter()
             self._update_metric_cards(model)
@@ -1464,10 +1507,11 @@ class ShellApp:
             return
         self._refresh_in_flight = False
         self._set_status_mode("offline")
-        self.updated_label.configure(text=f"ssh tunnel / live peer telemetry / bandwidth monitor • Не удалось обновить данные: {exc}")
+        self._status_base_text = HEADER_BASE_TEXT
+        self.updated_label.configure(text=f"{HEADER_BASE_TEXT} • Не удалось обновить данные: {exc}")
         self.connection_label.configure(text="LINK DOWN")
         if self._last_model is None:
-            self.updated_label.configure(text="ssh tunnel / live peer telemetry / bandwidth monitor • SYNC нет данных")
+            self.updated_label.configure(text=f"{HEADER_BASE_TEXT} • SYNC нет данных")
             self.footer_label.configure(text=f"ИСТОЧНИК: {self.dashboard_url}")
             self._set_warning_text([f"Ошибка загрузки: {exc}"])
             self._all_peer_rows = []
@@ -1500,7 +1544,8 @@ class ShellApp:
         self._refresh_in_flight = False
         try:
             self._set_status_mode("offline")
-            self.updated_label.configure(text=f"ssh tunnel / live peer telemetry / bandwidth monitor • tk callback error: {value}")
+            self._status_base_text = HEADER_BASE_TEXT
+            self.updated_label.configure(text=f"{HEADER_BASE_TEXT} • tk callback error: {value}")
             self.connection_label.configure(text="LINK DOWN")
         except Exception:
             pass
@@ -1509,9 +1554,7 @@ class ShellApp:
         status_label = getattr(self, "updated_label", None)
         if status_label is None:
             return
-        base_text = str(status_label.cget("text") or "").strip()
-        if not base_text:
-            base_text = "ssh tunnel / live peer telemetry / bandwidth monitor"
+        base_text = str(getattr(self, "_status_base_text", "") or HEADER_BASE_TEXT).strip()
         if warnings:
             text = f"{base_text} • ПРЕДУПРЕЖДЕНИЯ: " + " | ".join(warnings[:2])
             if len(warnings) > 2:
@@ -1523,8 +1566,30 @@ class ShellApp:
         status_label.configure(text=text)
 
     def _populate_peers(self, rows: List[Dict[str, object]]) -> None:
-        for item in self.peer_tree.get_children():
-            self.peer_tree.delete(item)
+        current_ids = list(self.peer_tree.get_children())
+        desired_ids = [str(row.get("public_key", "")) for row in rows]
+        if current_ids == desired_ids:
+            unchanged = True
+            for row, iid in zip(rows, current_ids):
+                values = (
+                    row["name"],
+                    row["endpoint_location"],
+                    row["active"],
+                    row["current"],
+                    row["share"],
+                    row["today"],
+                    row["total"],
+                    row["handshake"],
+                )
+                if tuple(self.peer_tree.item(iid, "values")) != values:
+                    unchanged = False
+                    break
+            if unchanged:
+                self.table_status_label.configure(text=f"{len(rows)} ROWS" if rows else "0 ROWS")
+                return
+
+        if current_ids:
+            self.peer_tree.delete(*current_ids)
         for row in rows:
             tags = ("active",) if bool(row.get("active_value")) else ("inactive",)
             self.peer_tree.insert(

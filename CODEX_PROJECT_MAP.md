@@ -14,7 +14,7 @@ This file is the project orientation sheet for Codex and maintainers.
 ## Main Files
 
 - `amnezia_traffic_collector.py`: collector, report builder, `collect`, `report`, `status`, `doctor`
-- `amnezia_vpn_shell.py`: native desktop shell that displays the live snapshot
+- `amnezia_vpn_shell.py`: native desktop shell that displays the live snapshot with the cyberpunk dashboard theme and faster refresh cadence
 - `amnezia_dashboard_server.py`: request-time dashboard server for fresh page loads
 - collector tracks current channel utilization, daily average load, and daily peak bandwidth
 - the dashboard shows a top traffic banner with load, headroom, and risk state
@@ -57,8 +57,12 @@ This file is the project orientation sheet for Codex and maintainers.
 - `AMNEZIA_PING_TARGET`
 - `AMNEZIA_ACTIVE_WINDOW_SECONDS`
 - `AMNEZIA_PING_COUNT`
+- `AMNEZIA_MTU_PROBE`
+- `AMNEZIA_MTU_TARGET`
+- `AMNEZIA_MTU_PROBE_CACHE_SECONDS`
 - `bandwidth_limit_mbps`
 - `network_interface`
+- `wireguard_mtu`
 
 ## Access Notes
 

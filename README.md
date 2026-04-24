@@ -23,7 +23,7 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 ## Repository Layout
 
 - [amnezia_traffic_collector.py](amnezia_traffic_collector.py): telemetry collector, report writer, and dashboard generator
-- [amnezia_vpn_shell.py](amnezia_vpn_shell.py): native Windows shell UI for the live VPN snapshot
+- [amnezia_vpn_shell.py](amnezia_vpn_shell.py): native Windows shell UI for the live VPN snapshot with the cyberpunk dashboard theme
 - [amnezia_dashboard_server.py](amnezia_dashboard_server.py): request-time dashboard server for fresh page loads
 - [amnezia_server_info.json](amnezia_server_info.json): server metadata and editable dashboard notes
 - [amnezia-traffic-collector.service](amnezia-traffic-collector.service): systemd unit for scheduled collection
@@ -68,6 +68,7 @@ Environment variables with defaults:
 - `AMNEZIA_PING_COUNT=3`
 - `AMNEZIA_MTU_PROBE=1`
 - `AMNEZIA_MTU_TARGET=1.1.1.1`
+- `AMNEZIA_MTU_PROBE_CACHE_SECONDS=3600`
 
 Important `amnezia_server_info.json` fields:
 
@@ -86,6 +87,7 @@ Important `amnezia_server_info.json` fields:
 If `bandwidth_limit_mbps` is empty, the collector falls back to the speed of the detected default network interface.
 If `wireguard_mtu` is set, the collector can compare it to the live `awg0` MTU and the probed path MTU.
 The current recommended value is `1380`.
+The collector also caches endpoint geo labels and MTU probe results so normal refresh cycles stay light.
 
 ## Generated Data
 
@@ -130,7 +132,7 @@ Open the shell UI locally through SSH:
 ```
 
 The launcher checks `AUTOSTOPVPN_SSH_KEY` and `AUTOSTOPCRM_SSH_KEY` first, then falls back to `autostopvpn_server_ed25519`, `autostopcrm_server_ed25519`, `codex_autostopvpn`, `codex_autostopcrm`, and `codex_autostopcrm_key` in `~/.ssh`. It then opens the native shell window without a second console or browser window.
-The shell keeps refreshing the live snapshot while it is open, and the collector timer on the server now runs every 10 seconds by default.
+The shell keeps refreshing the live snapshot while it is open at a 1s default interval, and the collector timer on the server now runs every second by default.
 
 Inspect the latest cached state:
 

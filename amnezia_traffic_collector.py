@@ -32,6 +32,7 @@ PING_COUNT = int(os.environ.get("AMNEZIA_PING_COUNT", "3"))
 MTU_PROBE_ENABLED = os.environ.get("AMNEZIA_MTU_PROBE", "1") != "0"
 MTU_PROBE_TARGET = os.environ.get("AMNEZIA_MTU_TARGET", PING_TARGET)
 MTU_PROBE_PAYLOADS = (1472, 1464, 1452, 1432, 1412, 1380)
+MTU_PROBE_CACHE_SECONDS = int(os.environ.get("AMNEZIA_MTU_PROBE_CACHE_SECONDS", "3600"))
 
 STATE_FILE = DATA_DIR / "state.json"
 TOTALS_FILE = DATA_DIR / "totals.json"
@@ -44,6 +45,7 @@ SERVER_INFO_FILE = DATA_DIR / "server_info.json"
 WEB_SUMMARY_FILE = WEB_DIR / "dashboard.json"
 WEB_INDEX_FILE = WEB_DIR / "index.html"
 GEO_CACHE_FILE = DATA_DIR / "geo_cache.json"
+TRANSPORT_CACHE_FILE = DATA_DIR / "transport_probe.json"
 GEOLOOKUP_TIMEOUT_SECONDS = 2.0
 
 
@@ -90,6 +92,16 @@ def load_geo_cache() -> Dict[str, object]:
     hosts = payload.get("hosts", {})
     if not isinstance(hosts, dict):
         payload["hosts"] = {}
+    return payload
+
+
+def load_transport_cache() -> Dict[str, object]:
+    payload = load_json(TRANSPORT_CACHE_FILE, {"updated_at": None, "result": {}})
+    if not isinstance(payload, dict):
+        return {"updated_at": None, "result": {}}
+    result = payload.get("result", {})
+    if not isinstance(result, dict):
+        payload["result"] = {}
     return payload
 
 
@@ -172,6 +184,7 @@ def format_peer_location(endpoint: object, geo_cache: Dict[str, object]) -> str:
         "label": label,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    geo_cache["_dirty"] = True
     return label
 
 
@@ -436,8 +449,16 @@ def get_ping_metrics() -> Dict[str, object]:
 
 
 def get_path_mtu_probe() -> Dict[str, object]:
+    cached = load_transport_cache()
+    cached_result = cached.get("result", {})
+    cached_at = parse_iso_datetime(cached.get("updated_at"))
+    if isinstance(cached_result, dict) and cached_at is not None:
+        age_seconds = max((now_local() - cached_at).total_seconds(), 0.0)
+        if age_seconds < MTU_PROBE_CACHE_SECONDS:
+            return cached_result
+
     if not MTU_PROBE_ENABLED:
-        return {
+        result = {
             "target": MTU_PROBE_TARGET,
             "enabled": False,
             "ok": None,
@@ -445,6 +466,8 @@ def get_path_mtu_probe() -> Dict[str, object]:
             "estimated_path_mtu": None,
             "tested_payloads": [],
         }
+        save_json(TRANSPORT_CACHE_FILE, {"updated_at": now_local().isoformat(), "result": result})
+        return result
 
     ip_overhead = 48 if ":" in MTU_PROBE_TARGET else 28
     tested_payloads: List[int] = []
@@ -455,7 +478,7 @@ def get_path_mtu_probe() -> Dict[str, object]:
             check=False,
         )
         if completed.returncode == 0:
-            return {
+            result = {
                 "target": MTU_PROBE_TARGET,
                 "enabled": True,
                 "ok": True,
@@ -463,8 +486,10 @@ def get_path_mtu_probe() -> Dict[str, object]:
                 "estimated_path_mtu": payload + ip_overhead,
                 "tested_payloads": tested_payloads,
             }
+            save_json(TRANSPORT_CACHE_FILE, {"updated_at": now_local().isoformat(), "result": result})
+            return result
 
-    return {
+    result = {
         "target": MTU_PROBE_TARGET,
         "enabled": True,
         "ok": False,
@@ -472,6 +497,8 @@ def get_path_mtu_probe() -> Dict[str, object]:
         "estimated_path_mtu": None,
         "tested_payloads": tested_payloads,
     }
+    save_json(TRANSPORT_CACHE_FILE, {"updated_at": now_local().isoformat(), "result": result})
+    return result
 
 
 def get_interface_mtu() -> Optional[int]:
@@ -1681,7 +1708,9 @@ def collect() -> int:
 
     save_json(STATE_FILE, new_state)
     save_json(TOTALS_FILE, totals)
-    save_json(GEO_CACHE_FILE, geo_cache)
+    if geo_cache.get("_dirty") or not GEO_CACHE_FILE.exists():
+        geo_cache.pop("_dirty", None)
+        save_json(GEO_CACHE_FILE, geo_cache)
     save_json(DAILY_DIR / f"{current_time.date().isoformat()}.json", daily)
     save_json(SUMMARY_FILE, summary)
     write_reports(totals, daily, summary)

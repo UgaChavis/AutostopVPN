@@ -236,7 +236,7 @@ class AmneziaVpnShellTests(unittest.TestCase):
         self.assertEqual(app._schedule_refresh_calls, 1)
         self.assertEqual(
             app.updated_label.values[-1]["text"],
-            "ssh tunnel / live peer telemetry / bandwidth monitor • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
+            "ssh tunnel // live peer telemetry // matrix load • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
         )
         self.assertEqual(app.connection_label.values[-1]["text"], "LINK UP")
 

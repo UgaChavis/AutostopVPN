@@ -146,6 +146,32 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         self.assertEqual(probe["estimated_path_mtu"], 1480)
         self.assertEqual(probe["tested_payloads"], [1472, 1464, 1452])
 
+    def test_get_path_mtu_probe_uses_fresh_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, ExitStack() as stack:
+            self._patch_repo_paths(stack, Path(temp_dir))
+            stack.enter_context(patch.object(collector, "MTU_PROBE_CACHE_SECONDS", 3600))
+            stack.enter_context(patch.object(collector, "now_local", return_value=self.current_time))
+            collector.save_json(
+                collector.TRANSPORT_CACHE_FILE,
+                {
+                    "updated_at": self.current_time.isoformat(),
+                    "result": {
+                        "target": "1.1.1.1",
+                        "enabled": True,
+                        "ok": True,
+                        "max_payload_bytes": 1472,
+                        "estimated_path_mtu": 1500,
+                        "tested_payloads": [1472],
+                    },
+                },
+            )
+            stack.enter_context(patch.object(collector, "run_command", side_effect=AssertionError("cache should bypass probe")))
+
+            probe = collector.get_path_mtu_probe()
+
+        self.assertEqual(probe["estimated_path_mtu"], 1500)
+        self.assertEqual(probe["tested_payloads"], [1472])
+
     def test_get_interface_mtu_reads_container_mtu(self) -> None:
         class _FakeCompleted:
             def __init__(self, stdout: str) -> None:

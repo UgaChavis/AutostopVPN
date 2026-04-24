@@ -110,6 +110,7 @@ The collector reads these environment variables:
 - `AMNEZIA_PING_COUNT`
 - `AMNEZIA_MTU_PROBE`
 - `AMNEZIA_MTU_TARGET`
+- `AMNEZIA_MTU_PROBE_CACHE_SECONDS`
 
 ## Safe Deployment Outline
 
@@ -121,10 +122,12 @@ The collector reads these environment variables:
 6. Run one manual collector execution.
 7. Reload `systemd`, restart the collector timer, enable the localhost dashboard service and verify `127.0.0.1:18080`.
 8. Check the `Transport:` line in the summary output. If the live `awg0` MTU is above the recommended value, lower it and re-test Telegram voice playback.
-9. The collector timer refreshes every 10 seconds to keep the shell snapshot fresh without making the server noisy.
+9. The collector timer refreshes every second to keep the shell snapshot fresh while the app is open.
 10. Open the shell app from Windows; the SSH tunnel is handled inside the app.
 
 For this deployment, the chosen value is `1380`.
+The MTU probe result is cached for an hour by default so the collector does not re-run `ping -M do` on every cycle.
+Geo labels for peer endpoints are cached too, so normal refresh cycles stay light.
 
 ## Rollback
 
@@ -133,7 +136,7 @@ For this deployment, the chosen value is `1380`.
 3. Restore the previous systemd unit files.
 4. Restore `/var/lib/amnezia-traffic` from backup if needed.
 5. Run `systemctl daemon-reload`.
-6. Restart `amnezia-traffic-collector.timer`. The timer is expected to run every 10 seconds in the current setup.
+6. Restart `amnezia-traffic-collector.timer`. The timer is expected to run every second in the current setup.
 
 Rollback does not touch the VPN container itself.
 
