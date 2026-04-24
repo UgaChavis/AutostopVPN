@@ -1159,8 +1159,8 @@ class ShellApp:
                 canvas.create_line(x, baseline_y, x, y, fill=stem_color, width=2 if idx == count - 1 else 1)
             if len(points) >= 4:
                 canvas.create_polygon(*fill_points, width=0, smooth=True, fill="#071f12")
-                canvas.create_line(*points, fill=ACCENT, width=3, smooth=True)
                 canvas.create_line(*points, fill="#113d2a", width=6, smooth=True)
+                canvas.create_line(*points, fill=ACCENT, width=3, smooth=True)
 
         if self._traffic_history:
             cursor_x = inner_pad + self._trend_phase
@@ -1463,10 +1463,9 @@ class ShellApp:
             self._last_snapshot_label = snapshot_label
 
             if repeated_snapshot:
-                self._status_base_text = HEADER_BASE_TEXT
-                self.updated_label.configure(
-                    text=f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
-                )
+                status_text = f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+                self._status_base_text = status_text
+                self.updated_label.configure(text=status_text)
                 self._card_value_labels["snapshot"].configure(text=snapshot_label)
                 self._card_note_labels["snapshot"].configure(text=f"AGE {age_label} | STEP {refresh_seconds:g}s")
                 self._render_trend_graph(model)
@@ -1484,10 +1483,9 @@ class ShellApp:
 
             self.root.title(f"Autostop VPN Control :: {str(model['bandwidth_state_label']).upper()}")
             self._set_status_mode("online")
-            self._status_base_text = HEADER_BASE_TEXT
-            self.updated_label.configure(
-                text=f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
-            )
+            status_text = f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+            self._status_base_text = status_text
+            self.updated_label.configure(text=status_text)
             self._apply_peer_filter()
             self._update_metric_cards(model)
             self._set_warning_text(model["warnings"])

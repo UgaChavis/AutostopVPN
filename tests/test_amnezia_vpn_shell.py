@@ -240,6 +240,42 @@ class AmneziaVpnShellTests(unittest.TestCase):
         )
         self.assertEqual(app.connection_label.values[-1]["text"], "LINK UP")
 
+    def test_refresh_success_keeps_sync_text_after_warning_update(self) -> None:
+        app = shell.ShellApp.__new__(shell.ShellApp)
+        app._closed = False
+        app._refresh_in_flight = True
+        app._last_model = {"existing": True}
+        app._last_snapshot_label = "2026-04-18T03:00:00+07:00"
+        app._selected_peer_key = None
+        app._all_peer_rows = [{"public_key": "one"}]
+        app._peer_rows_by_key = {}
+        app._filtered_peer_rows = [{"public_key": "one"}]
+        app._card_value_labels = {"snapshot": _DummyLabel()}
+        app._card_note_labels = {"snapshot": _DummyLabel()}
+        app.updated_label = _DummyLabel()
+        app.connection_label = _DummyLabel()
+        app.footer_label = _DummyLabel()
+        app.state_label = _DummyLabel()
+        app._schedule_refresh = lambda: None
+        app._apply_peer_filter = lambda: None
+        app._update_metric_cards = lambda *_args, **_kwargs: None
+        app._select_peer = lambda *_args, **_kwargs: None
+
+        shell.ShellApp._handle_refresh_success(
+            app,
+            {
+                "updated_label": "2026-04-18T03:00:00+07:00",
+                "age_label": "5s",
+                "refresh_seconds": 1.0,
+                "warnings": [],
+            },
+        )
+
+        self.assertEqual(
+            app.updated_label.values[-1]["text"],
+            "ssh tunnel // live peer telemetry // matrix load • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
+        )
+
     def test_resolve_key_path_prefers_env_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             key_path = Path(tmp) / "custom.key"

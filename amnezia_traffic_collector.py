@@ -453,8 +453,12 @@ def get_path_mtu_probe() -> Dict[str, object]:
     cached_result = cached.get("result", {})
     cached_at = parse_iso_datetime(cached.get("updated_at"))
     if isinstance(cached_result, dict) and cached_at is not None:
+        cached_matches_config = (
+            cached_result.get("target") == MTU_PROBE_TARGET
+            and bool(cached_result.get("enabled")) == MTU_PROBE_ENABLED
+        )
         age_seconds = max((now_local() - cached_at).total_seconds(), 0.0)
-        if age_seconds < MTU_PROBE_CACHE_SECONDS:
+        if cached_matches_config and age_seconds < MTU_PROBE_CACHE_SECONDS:
             return cached_result
 
     if not MTU_PROBE_ENABLED:

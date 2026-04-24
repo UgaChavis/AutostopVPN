@@ -4,9 +4,9 @@ This file is the project orientation sheet for Codex and maintainers.
 
 ## Canonical Locations
 
-- Local workspace: `C:\Users\9860606\Desktop\AutostopVPN`
+- Local workspace: `C:\Users\User\Desktop\AutostopVPN`
 - Local install target: `%LOCALAPPDATA%\AutostopVPN`
-- Desktop launcher: `C:\Users\9860606\Desktop\Autostop VPN.lnk`
+- Desktop launcher: `C:\Users\User\Desktop\Autostop VPN.lnk`
 - GitHub VPN branch: `autostopVPN`
 - Server mirror path: `/opt/autostopcrm`
 - External access documentation root: `C:\Users\User\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`
