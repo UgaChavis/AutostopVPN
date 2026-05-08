@@ -7,6 +7,7 @@ import json
 import os
 import queue
 import shutil
+import shlex
 import sys
 import threading
 import time
@@ -47,6 +48,7 @@ _MAIN_WINDOW_TITLE_PREFIX = "Autostop VPN Shell"
 _ENDPOINT_LOCATION_CACHE: Dict[str, str] = {}
 _SSH_CONNECT_TIMEOUT_SECONDS = 5
 _SSH_TUNNEL_WAIT_SECONDS = 10.0
+_SSH_SERVICE_TIMEOUT_SECONDS = 15.0
 _DEBUG_LOG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AutostopVPN" / "shell_errors.log"
 _SSH_LOG_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "AutostopVPN" / "ssh_tunnel.log"
 HEADER_BASE_TEXT = "ssh tunnel // live peer telemetry // matrix load"
@@ -71,6 +73,25 @@ ROW_SELECTED_BG = "#17442e"
 INPUT_BG = "#071116"
 FONT_UI = "Segoe UI"
 FONT_MONO = "Consolas"
+_REMOTE_MONITORING_START_SCRIPT = """
+set -e
+systemctl start amnezia-dashboard.service
+systemctl start amnezia-traffic-collector.timer
+systemctl start amnezia-traffic-collector.service || true
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    curl -fsS --max-time 2 http://127.0.0.1:18080/dashboard.json >/dev/null && exit 0
+    sleep 0.5
+done
+systemctl is-active amnezia-dashboard.service >/dev/null
+""".strip()
+_REMOTE_MONITORING_STOP_SCRIPT = """
+set +e
+systemctl stop amnezia-traffic-collector.timer
+systemctl stop amnezia-traffic-collector.service
+systemctl stop amnezia-dashboard.service
+systemctl reset-failed amnezia-traffic-collector.service amnezia-dashboard.service
+exit 0
+""".strip()
 
 
 def _state_badge_colors(state_class: str) -> tuple[str, str]:
@@ -296,6 +317,15 @@ def _resolve_ssh_executable() -> str:
     raise FileNotFoundError("ssh executable not found")
 
 
+def _hidden_subprocess_kwargs() -> Dict[str, object]:
+    kwargs: Dict[str, object] = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        kwargs["startupinfo"] = startupinfo
+    return kwargs
+
+
 def _resolve_key_path(explicit_key_path: str = "") -> str:
     if explicit_key_path:
         candidate = Path(explicit_key_path)
@@ -327,14 +357,71 @@ def _resolve_key_path(explicit_key_path: str = "") -> str:
     )
 
 
+def _run_ssh_remote_command(
+    host: str,
+    user: str,
+    key_path: str,
+    remote_command: str,
+    timeout: float = _SSH_SERVICE_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[str]:
+    ssh_executable = _resolve_ssh_executable()
+    args = [
+        ssh_executable,
+        "-i",
+        key_path,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={_SSH_CONNECT_TIMEOUT_SECONDS}",
+        "-o",
+        "ConnectionAttempts=1",
+        "-o",
+        "LogLevel=ERROR",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        f"{user}@{host}",
+        "bash",
+        "-lc",
+        shlex.quote(remote_command),
+    ]
+    _append_ssh_log("running remote command: " + " ".join(args[:-1]) + " <script>")
+    try:
+        completed = subprocess.run(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            **_hidden_subprocess_kwargs(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        _append_ssh_log(f"remote command timed out after {timeout:g}s")
+        raise TimeoutError(f"Remote monitoring command timed out after {timeout:g}s") from exc
+    if completed.stdout.strip():
+        _append_ssh_log("remote stdout: " + completed.stdout.strip())
+    if completed.stderr.strip():
+        _append_ssh_log("remote stderr: " + completed.stderr.strip())
+    if completed.returncode != 0:
+        raise RuntimeError(f"Remote monitoring command failed with code {completed.returncode}: {completed.stderr.strip()}")
+    return completed
+
+
+def _run_remote_monitoring_control(host: str, user: str, key_path: str, action: str) -> None:
+    if action == "start":
+        _run_ssh_remote_command(host, user, key_path, _REMOTE_MONITORING_START_SCRIPT)
+        return
+    if action == "stop":
+        _run_ssh_remote_command(host, user, key_path, _REMOTE_MONITORING_STOP_SCRIPT)
+        return
+    raise ValueError(f"Unknown remote monitoring action: {action}")
+
+
 def _start_ssh_tunnel(host: str, user: str, key_path: str, local_port: int, remote_port: int) -> subprocess.Popen[str]:
     ssh_executable = _resolve_ssh_executable()
     tunnel_spec = f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    startupinfo = None
-    if os.name == "nt":
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     args = [
             ssh_executable,
             "-i",
@@ -369,8 +456,7 @@ def _start_ssh_tunnel(host: str, user: str, key_path: str, local_port: int, remo
         stdout=subprocess.DEVNULL,
         stderr=log_handle,
         stdin=subprocess.DEVNULL,
-        creationflags=creationflags,
-        startupinfo=startupinfo,
+        **_hidden_subprocess_kwargs(),
     )
 
 
@@ -532,6 +618,7 @@ class ShellApp:
         remote_port: int,
         refresh_seconds: float,
         dashboard_url: Optional[str] = None,
+        manage_remote_monitoring: bool = True,
     ) -> None:
         self.root = root
         self.host = host
@@ -540,12 +627,14 @@ class ShellApp:
         self.local_port = local_port
         self.remote_port = remote_port
         self.dashboard_url = dashboard_url or f"http://127.0.0.1:{local_port}/dashboard.json"
+        self.manage_remote_monitoring = manage_remote_monitoring
         self.refresh_seconds = max(float(refresh_seconds), 0.5)
         self.refresh_ms = max(int(self.refresh_seconds * 1000), 500)
         self._refresh_after_id: Optional[str] = None
         self._refresh_result_after_id: Optional[str] = None
         self._refresh_in_flight = False
         self._closed = False
+        self._remote_monitoring_started = False
         self._last_model: Optional[Dict[str, object]] = None
         self._last_snapshot_label: Optional[str] = None
         self._ssh_process: Optional[subprocess.Popen[bytes]] = None
@@ -1464,9 +1553,27 @@ class ShellApp:
     def _port_in_use(self) -> bool:
         return _test_local_port(self.local_port)
 
+    def _ensure_remote_monitoring_started(self) -> None:
+        if not self.manage_remote_monitoring or self._remote_monitoring_started:
+            return
+        _run_remote_monitoring_control(self.host, self.ssh_user, self.key_path, "start")
+        self._remote_monitoring_started = True
+
+    def _stop_remote_monitoring(self) -> None:
+        if not self.manage_remote_monitoring:
+            return
+        try:
+            _run_remote_monitoring_control(self.host, self.ssh_user, self.key_path, "stop")
+        except Exception as exc:  # pragma: no cover - network dependent cleanup
+            _append_ssh_log(f"remote monitoring stop failed: {exc!r}")
+            _append_debug_log(f"remote monitoring stop failed: {exc!r}")
+        finally:
+            self._remote_monitoring_started = False
+
     def _ensure_tunnel(self) -> None:
         if self._closed:
             return
+        self._ensure_remote_monitoring_started()
         if self._port_in_use():
             return
         if self._ssh_process is not None and self._ssh_process.poll() is not None:
@@ -1707,6 +1814,7 @@ class ShellApp:
                 self._ssh_process.terminate()
             except Exception:  # pragma: no cover - cleanup best effort
                 pass
+        self._stop_remote_monitoring()
         if self._status_blink_job is not None:
             try:
                 self.root.after_cancel(self._status_blink_job)
@@ -1723,6 +1831,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--local-port", type=int, default=DEFAULT_LOCAL_PORT, help="Local tunnel port")
     parser.add_argument("--remote-port", type=int, default=DEFAULT_REMOTE_PORT, help="Remote dashboard port")
     parser.add_argument("--refresh-seconds", type=float, default=DEFAULT_REFRESH_SECONDS, help="Auto-refresh interval in seconds")
+    parser.add_argument(
+        "--no-manage-remote-monitoring",
+        action="store_false",
+        dest="manage_remote_monitoring",
+        default=True,
+        help="Do not start/stop server monitoring services with the desktop shell",
+    )
     return parser.parse_args(argv)
 
 
@@ -1744,6 +1859,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         local_port=args.local_port,
         remote_port=args.remote_port,
         refresh_seconds=args.refresh_seconds,
+        manage_remote_monitoring=args.manage_remote_monitoring,
     )
     try:
         root.mainloop()

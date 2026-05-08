@@ -60,6 +60,12 @@ For the Windows desktop flow:
 2. Launch `Autostop VPN.lnk` from the desktop
 3. If the launcher cannot find a key, set `AUTOSTOPVPN_SSH_KEY` or `AUTOSTOPCRM_SSH_KEY` and retry
 
+For outage monitoring without touching the VPN runtime:
+
+```powershell
+.\check_autostopvpn_network.ps1 -PingCount 10 -SampleSeconds 15
+```
+
 ## Repository Focus
 
 This repository contains the VPN monitoring and shell workspace only.

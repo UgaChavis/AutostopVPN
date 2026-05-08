@@ -20,7 +20,8 @@ This file is the project orientation sheet for Codex and maintainers.
 - the dashboard shows a top traffic banner with load, headroom, and risk state
 - `amnezia_server_info.json`: server metadata, SSH details, bandwidth limit, notes
 - `open_amnezia_dashboard.ps1` and `open_amnezia_dashboard.cmd`: Windows shell launchers
-- the shell app keeps the SSH tunnel hidden and uses a single desktop window
+- `check_autostopvpn_network.ps1`: read-only outage monitor for SSH, provider loss, WireGuard handshakes, and traffic deltas
+- the shell app keeps the SSH tunnel hidden, starts server monitoring while the window is open, stops it on close, and uses a single desktop window
 - `start_autostopvpn.ps1`: stable desktop entrypoint
 - `install_autostopvpn.ps1`: local install and desktop shortcut creation
 - `remove_autostopvpn.ps1`: local uninstall
@@ -34,8 +35,9 @@ This file is the project orientation sheet for Codex and maintainers.
 1. Read peer and server state from Docker and host probes.
 2. Build current peer rows and traffic deltas.
 3. Write JSON, CSV, MD, and HTML outputs under the data directory.
-4. Serve the dashboard JSON locally on the server.
-5. Open the native shell window from Windows through SSH.
+4. The native shell starts server-side monitoring over SSH when the window opens.
+5. Serve the dashboard JSON locally on the server and read it through the hidden SSH tunnel.
+6. Stop server-side monitoring when the native shell window closes.
 
 ## Output Targets
 

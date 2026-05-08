@@ -31,6 +31,7 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 - [amnezia-dashboard.service](amnezia-dashboard.service): localhost HTTP service for the latest dashboard snapshot
 - [open_amnezia_dashboard.ps1](open_amnezia_dashboard.ps1): PowerShell launcher for the native shell app
 - [open_amnezia_dashboard.cmd](open_amnezia_dashboard.cmd): cmd wrapper for the PowerShell launcher
+- [check_autostopvpn_network.ps1](check_autostopvpn_network.ps1): read-only outage monitor for server reachability, peer handshakes, and light traffic deltas
 - [start_autostopvpn.ps1](start_autostopvpn.ps1): stable desktop entrypoint for the installed app
 - [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut with a generated shield icon
 - [remove_autostopvpn.ps1](remove_autostopvpn.ps1): remove the local install and desktop shortcut
@@ -42,15 +43,19 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 ## Runtime Flow
 
 ```text
-docker exec amnezia-awg2 wg show awg0 dump
+Windows launcher starts the native shell UI
     ->
-collector builds traffic, activity, and server summary
+shell starts amnezia-dashboard.service and amnezia-traffic-collector.timer over SSH
     ->
-data/ JSON + reports/ CSV/MD + web/ dashboard files
+collector reads docker exec amnezia-awg2 wg show awg0 dump
+    ->
+collector writes data/ JSON + reports/ CSV/MD + web/ dashboard files
     ->
 amnezia-dashboard.service serves dashboard JSON on 127.0.0.1:18080
     ->
-Windows launcher opens SSH tunnel and starts the shell UI
+shell reads dashboard JSON through its hidden SSH tunnel
+    ->
+shell stops monitoring services when the window closes
 ```
 
 ## Configuration
@@ -132,7 +137,7 @@ Open the shell UI locally through SSH:
 ```
 
 The launcher checks `AUTOSTOPVPN_SSH_KEY` and `AUTOSTOPCRM_SSH_KEY` first, then falls back to `autostopvpn_server_ed25519`, `autostopcrm_server_ed25519`, `codex_autostopvpn`, `codex_autostopcrm`, and `codex_autostopcrm_key` in `~/.ssh`. It then opens the native shell window without a second console or browser window.
-The shell keeps refreshing the live snapshot while it is open at a 1s default interval, and the collector timer on the server now runs every second by default.
+By default, the shell starts `amnezia-dashboard.service` and `amnezia-traffic-collector.timer` on the server when the window opens, refreshes the live snapshot at a 1s interval, and stops those monitoring services when the window closes. The VPN container is not restarted or reconfigured by this flow. Use `--no-manage-remote-monitoring` only for manual server-side maintenance.
 
 Inspect the latest cached state:
 
@@ -145,6 +150,20 @@ Check local prerequisites:
 ```powershell
 python .\amnezia_traffic_collector.py doctor
 ```
+
+During a provider outage, use the read-only monitor from the local workspace:
+
+```powershell
+.\check_autostopvpn_network.ps1 -PingCount 10 -SampleSeconds 15
+```
+
+For a small server-side download sample, opt in explicitly:
+
+```powershell
+.\check_autostopvpn_network.ps1 -DownloadBytes 5000000
+```
+
+The monitor does not restart services, change peer configuration, or change MTU. It only reads service state, `wg show` counters, routes, pings, and the optional HTTP sample.
 
 ## Working Model
 
@@ -192,4 +211,5 @@ See [AMNEZIA_VPN_MONITORING.md](AMNEZIA_VPN_MONITORING.md) for the step-by-step 
 
 - The collector never changes WireGuard peer configuration.
 - The dashboard API is intentionally localhost-only on the server.
+- The collector and dashboard are app-managed by default: they should be disabled for boot-time autostart and started by the desktop shell only while the shell is open.
 - If you change the server host, SSH key, or project path, update `amnezia_server_info.json` first.

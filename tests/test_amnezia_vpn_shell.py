@@ -355,6 +355,44 @@ class AmneziaVpnShellTests(unittest.TestCase):
             with patch.object(shell.Path, "home", return_value=home):
                 self.assertEqual(shell._resolve_key_path(), str(key_path))
 
+    def test_parse_args_manages_remote_monitoring_by_default(self) -> None:
+        self.assertTrue(shell.parse_args([]).manage_remote_monitoring)
+        self.assertFalse(shell.parse_args(["--no-manage-remote-monitoring"]).manage_remote_monitoring)
+
+    def test_remote_monitoring_control_uses_start_and_stop_scripts(self) -> None:
+        calls = []
+
+        def fake_run(_host, _user, _key_path, remote_command, _timeout=shell._SSH_SERVICE_TIMEOUT_SECONDS):
+            calls.append(remote_command)
+
+        with patch.object(shell, "_run_ssh_remote_command", side_effect=fake_run):
+            shell._run_remote_monitoring_control("vpn.example", "root", "key", "start")
+            shell._run_remote_monitoring_control("vpn.example", "root", "key", "stop")
+
+        self.assertIn("systemctl start amnezia-dashboard.service", calls[0])
+        self.assertIn("systemctl start amnezia-traffic-collector.timer", calls[0])
+        self.assertIn("systemctl stop amnezia-traffic-collector.timer", calls[1])
+        self.assertIn("systemctl stop amnezia-dashboard.service", calls[1])
+
+    def test_ensure_tunnel_starts_remote_monitoring_before_using_existing_port(self) -> None:
+        app = shell.ShellApp.__new__(shell.ShellApp)
+        app._closed = False
+        app.manage_remote_monitoring = True
+        app._remote_monitoring_started = False
+        app.host = "vpn.example"
+        app.ssh_user = "root"
+        app.key_path = "key"
+        app.local_port = 18765
+
+        calls = []
+
+        with patch.object(shell, "_run_remote_monitoring_control", side_effect=lambda *args: calls.append(args)):
+            with patch.object(shell, "_test_local_port", return_value=True):
+                shell.ShellApp._ensure_tunnel(app)
+
+        self.assertEqual(calls, [("vpn.example", "root", "key", "start")])
+        self.assertTrue(app._remote_monitoring_started)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -57,6 +57,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - current load, daily average, and daily peak bandwidth for the server channel
 - a top banner that shows whether the channel is normal, near limit, or overloaded
 - the native shell app refreshes the latest snapshot automatically while it is open
+- the native shell app starts and stops the server-side collector/dashboard services by default
 - per-peer share of the live flow for quick hotspot detection
 - explicit traffic periods for current day and full accounting interval
 - current speeds based on the latest sample window
@@ -89,6 +90,41 @@ docker exec amnezia-awg2 cat /sys/class/net/awg0/mtu
 
 This is a tunnel-level fix. Telegram itself does not need any special configuration if the VPN path is clean.
 
+## Provider Outage Watch Mode
+
+When packet loss is visible on the provider network, keep the VPN runtime untouched and collect evidence instead.
+
+Safe read-only checks from the local workspace:
+
+```powershell
+.\check_autostopvpn_network.ps1 -PingCount 10 -SampleSeconds 15
+```
+
+Optional light throughput check:
+
+```powershell
+.\check_autostopvpn_network.ps1 -DownloadBytes 5000000
+```
+
+Allowed during provider instability:
+
+- check GitHub/local parity
+- read `systemctl is-active` for the dashboard and collector
+- read `docker ps`, `ss -lunp`, `wg show`, and `ip route`
+- sample pings to the provider gateway, `1.1.1.1`, and `8.8.8.8`
+- sample peer handshake age and traffic counter deltas
+- collect provider-facing evidence with timestamps
+
+Avoid while active handshakes still exist:
+
+- rebuilding, replacing, or restarting `amnezia-awg2`
+- editing `/opt/amnezia/awg/awg0.conf`
+- running `wg set` or removing peers
+- changing MTU repeatedly while packet loss is already visible at the provider gateway
+- restarting the collector/dashboard loop as a way to diagnose VPN transport
+
+The collector and dashboard can be repaired after provider loss stabilizes. Treat stable gateway ping over several samples as the signal to resume server-side monitoring deployment work.
+
 ## Local Layout
 
 This repository is intentionally flat:
@@ -120,15 +156,22 @@ The collector reads these environment variables:
 4. Copy `amnezia_server_info.json` to `/var/lib/amnezia-traffic/server_info.json` and adjust provider or billing notes if needed.
 5. If the provider cap is known, set `bandwidth_limit_mbps`; otherwise the collector will fall back to the default network interface speed when available.
 6. Run one manual collector execution.
-7. Reload `systemd`, stop `amnezia-traffic-collector.timer`, start or restart `amnezia-dashboard.service`, then start the timer again and verify `127.0.0.1:18080`.
+7. Reload `systemd`, run one manual collector execution, start `amnezia-dashboard.service`, and verify `127.0.0.1:18080`.
 8. Check the `Transport:` line in the summary output. If the live `awg0` MTU is above the recommended value, lower it and re-test Telegram voice playback.
-9. The collector timer refreshes every second to keep the shell snapshot fresh while the app is open.
+9. Disable boot-time autostart for `amnezia-dashboard.service` and `amnezia-traffic-collector.timer`; the desktop shell starts them on open and stops them on close:
+
+```bash
+systemctl disable --now amnezia-dashboard.service amnezia-traffic-collector.timer
+systemctl stop amnezia-traffic-collector.service
+systemctl reset-failed amnezia-traffic-collector.service amnezia-dashboard.service
+```
+
 10. Open the shell app from Windows; the SSH tunnel is handled inside the app.
 
 For this deployment, the chosen value is `1380`.
 The MTU probe result is cached for an hour by default so the collector does not re-run `ping -M do` on every cycle.
 Geo labels for peer endpoints are cached too, so normal refresh cycles stay light.
-Because the timer runs every second, `amnezia-dashboard.service` should be restarted while the collector timer is stopped. Otherwise systemd can leave the dashboard start job waiting behind a continuously triggered collector service.
+Because the timer can run every second while the shell is open, `amnezia-dashboard.service` should be restarted while the collector timer is stopped during manual maintenance. Otherwise systemd can leave the dashboard start job waiting behind a continuously triggered collector service.
 
 ## Rollback
 
@@ -138,7 +181,7 @@ Because the timer runs every second, `amnezia-dashboard.service` should be resta
 4. Restore the previous systemd unit files.
 5. Restore `/var/lib/amnezia-traffic` from backup if needed.
 6. Run `systemctl daemon-reload`.
-7. Start `amnezia-dashboard.service`, then restart `amnezia-traffic-collector.timer`. The timer is expected to run every second in the current setup.
+7. Start `amnezia-dashboard.service` only for verification, then stop it again unless the desktop shell is open.
 
 Rollback does not touch the VPN container itself.
 
@@ -149,7 +192,10 @@ Use `open_amnezia_dashboard.cmd`.
 It:
 
 - launches the native Autostop VPN shell window
+- starts server-side monitoring services
 - starts and hides the SSH tunnel inside the app
 - refreshes the view every few seconds while the window is open
+- stops server-side monitoring services when the window closes
 
 No public dashboard port is exposed to the internet.
+The VPN container `amnezia-awg2` is not restarted by the launcher.
