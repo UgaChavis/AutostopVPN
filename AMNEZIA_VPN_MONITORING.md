@@ -75,18 +75,17 @@ If Telegram voice notes, media, or sticker packs pause inside the VPN, the first
 Recommended order:
 
 1. Read the current values from the dashboard or `status` output.
-2. If `Transport:` shows `awg0 MTU` above the recommended value, try `1380` first.
+2. If `Transport:` shows `awg0 MTU` above the recommended value, try `1360` first, then `1280` for mobile networks with unstable Telegram media loading.
 3. Apply the runtime test on the server:
 
 ```bash
-docker exec amnezia-awg2 ip link set dev awg0 mtu 1380
+docker exec amnezia-awg2 ip link set dev awg0 mtu 1280
 docker exec amnezia-awg2 cat /sys/class/net/awg0/mtu
 ```
 
 4. Re-test Telegram voice playback and media loading.
-5. If it is still unstable, try `1360`.
-6. If `1380` fixes the pauses, make the change persistent in the live container start/config path for `amnezia-awg2`.
-7. Put the chosen permanent value into `amnezia_server_info.json` as `wireguard_mtu` so the dashboard shows the same target on future runs.
+5. If `1280` fixes the pauses and media loading, make the change persistent in the live container start/config path for `amnezia-awg2`.
+6. Put the chosen permanent value into `amnezia_server_info.json` as `wireguard_mtu` so the dashboard shows the same target on future runs.
 
 This is a tunnel-level fix. Telegram itself does not need any special configuration if the VPN path is clean.
 
@@ -168,7 +167,7 @@ systemctl reset-failed amnezia-traffic-collector.service amnezia-dashboard.servi
 
 10. Open the shell app from Windows; the SSH tunnel is handled inside the app.
 
-For this deployment, the chosen value is `1380`.
+For this deployment, the chosen value is `1280`.
 The MTU probe result is cached for an hour by default so the collector does not re-run `ping -M do` on every cycle.
 Geo labels for peer endpoints are cached too, so normal refresh cycles stay light.
 Because the timer can run every second while the shell is open, `amnezia-dashboard.service` should be restarted while the collector timer is stopped during manual maintenance. Otherwise systemd can leave the dashboard start job waiting behind a continuously triggered collector service.

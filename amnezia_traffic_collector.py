@@ -833,7 +833,7 @@ def build_warnings(summary: Dict[str, object]) -> List[str]:
         recommended_mtu = transport.get("recommended_interface_mtu")
         if interface_mtu is not None and recommended_mtu is not None and int(interface_mtu) > int(recommended_mtu):
             warnings.append(
-                f"MTU awg0={int(interface_mtu)} выше ориентира {int(recommended_mtu)}; для Telegram можно попробовать 1380-1420."
+                f"MTU awg0={int(interface_mtu)} выше ориентира {int(recommended_mtu)}; для мобильного Telegram можно попробовать 1280-1360."
             )
         elif transport.get("ok") is False:
             warnings.append(f"Не удалось подтвердить PMTU до {transport.get('target', MTU_PROBE_TARGET)}.")

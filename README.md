@@ -91,7 +91,7 @@ Important `amnezia_server_info.json` fields:
 
 If `bandwidth_limit_mbps` is empty, the collector falls back to the speed of the detected default network interface.
 If `wireguard_mtu` is set, the collector can compare it to the live `awg0` MTU and the probed path MTU.
-The current recommended value is `1380`.
+The current recommended value is `1280` after mobile Telegram media testing.
 The collector also caches endpoint geo labels and MTU probe results so normal refresh cycles stay light.
 
 ## Generated Data

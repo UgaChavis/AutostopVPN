@@ -10,7 +10,7 @@ $sshUser = [string]$serverInfo.ssh_user
 $sshHost = [string]$serverInfo.public_ip
 $sshDestination = "${sshUser}@${sshHost}"
 $container = [string]$serverInfo.vpn_container
-$mtu = if ($serverInfo.wireguard_mtu) { [int]$serverInfo.wireguard_mtu } else { 1380 }
+$mtu = if ($serverInfo.wireguard_mtu) { [int]$serverInfo.wireguard_mtu } else { 1280 }
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 
 $backupCommand = "mkdir -p /root/autostopvpn-backups && docker cp ${container}:/opt/amnezia/awg/awg0.conf /root/autostopvpn-backups/awg0.conf.bak.$timestamp"
