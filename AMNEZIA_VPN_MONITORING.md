@@ -34,6 +34,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `open_amnezia_dashboard.ps1`
 - `open_amnezia_dashboard.cmd`
 - `apply_telegram_mtu_fix.ps1`
+- `apply_telegram_mss_fallback.ps1`
 - `tests/test_amnezia_traffic_collector.py`
 
 ## What The Collector Produces
@@ -70,24 +71,41 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 
 ## Telegram Stability Fix
 
-If Telegram voice notes, media, or sticker packs pause inside the VPN, the first server-side fix is to lower the tunnel MTU.
+If Telegram voice notes, media, or sticker packs pause inside the VPN, do not assume the tunnel MTU is still the only problem. The current server-side baseline is `awg0 MTU=1280`, and the live config should also contain `MTU = 1280`.
 
 Recommended order:
 
 1. Read the current values from the dashboard or `status` output.
-2. If `Transport:` shows `awg0 MTU` above the recommended value, try `1360` first, then `1280` for mobile networks with unstable Telegram media loading.
-3. Apply the runtime test on the server:
+2. Capture a read-only Telegram baseline:
+
+```powershell
+.\check_autostopvpn_network.ps1 -PingCount 100 -SampleSeconds 30
+```
+
+3. Confirm these baseline signals:
+   - `Telegram mobile readiness` shows live `awg0` MTU and config MTU equal to `1280`.
+   - `Peer keepalive summary` shows whether peers are running with keepalive off and whether handshakes go stale.
+   - `Telegram MSS counters` shows whether current Telegram MSS clamp rules are present and receiving traffic.
+   - `Gateway jitter` shows provider gateway packet loss and RTT spread.
+
+4. Run a pilot on 2-3 problem phones before changing everyone. For each pilot mobile profile, keep existing keys, endpoint, DNS, and `AllowedIPs`, and set:
+
+```ini
+MTU = 1280
+PersistentKeepalive = 25
+```
+
+5. Test Telegram on each pilot phone after 15 minutes of idle time, media download, voice note playback, media upload, and Wi-Fi/LTE switching.
+6. Watch the pilot for 48 hours. The pass condition is no case where Telegram only recovers after restarting the mobile app, no noticeable battery or heat complaints, and no normal browsing regression through the VPN.
+
+If `Transport:` or `Telegram mobile readiness` shows `awg0 MTU` above the recommended value, fix MTU before the keepalive pilot. Apply the runtime test on the server:
 
 ```bash
 docker exec amnezia-awg2 ip link set dev awg0 mtu 1280
 docker exec amnezia-awg2 cat /sys/class/net/awg0/mtu
 ```
 
-4. Re-test Telegram voice playback and media loading.
-5. If `1280` fixes the pauses and media loading, make the change persistent in the live container start/config path for `amnezia-awg2`.
-6. Put the chosen permanent value into `amnezia_server_info.json` as `wireguard_mtu` so the dashboard shows the same target on future runs.
-
-This is a tunnel-level fix. Telegram itself does not need any special configuration if the VPN path is clean.
+If `1280` fixes the pauses and media loading, make the change persistent in the live container start/config path for `amnezia-awg2`. Put the chosen permanent value into `amnezia_server_info.json` as `wireguard_mtu` so the dashboard shows the same target on future runs.
 
 The local helper `apply_telegram_mtu_fix.ps1` is intentionally treated as high risk because it changes the live container MTU. Preview the planned SSH and SCP operations before applying:
 
@@ -95,6 +113,15 @@ The local helper `apply_telegram_mtu_fix.ps1` is intentionally treated as high r
 .\apply_telegram_mtu_fix.ps1 -DryRun
 .\apply_telegram_mtu_fix.ps1 -WhatIf
 ```
+
+If the mobile pilot does not improve Telegram, the next server-side fallback is a generic TCP MSS clamp through `awg0`. The helper is intentionally not automatic because it changes live container firewall rules and the container start script. Preview it first and run it only during a low-traffic maintenance window:
+
+```powershell
+.\apply_telegram_mss_fallback.ps1 -DryRun -NoRestart
+.\apply_telegram_mss_fallback.ps1 -WhatIf -NoRestart
+```
+
+Do not mass-replace user profiles or make the MSS fallback persistent until the pilot confirms that the safer `MTU=1280` and `PersistentKeepalive=25` profile standard is insufficient.
 
 ## Provider Outage Watch Mode
 

@@ -9,7 +9,10 @@ param(
     [int]$SampleSeconds = 15,
     [int]$DownloadBytes = 0,
     [int]$DownloadTimeoutSeconds = 30,
-    [int]$ConnectTimeoutSeconds = 15
+    [int]$ConnectTimeoutSeconds = 15,
+    [int]$TelegramTargetMtu = 1280,
+    [int]$TelegramTargetKeepalive = 25,
+    [int]$TelegramMss = 1240
 )
 
 $ErrorActionPreference = "Stop"
@@ -109,6 +112,17 @@ function Invoke-ReadOnlySsh {
     }
 }
 
+function Invoke-ReadOnlyRemoteScript {
+    param(
+        [Parameter(Mandatory = $true)][string]$Script,
+        [switch]$AllowFailure
+    )
+
+    $remoteBytes = [System.Text.Encoding]::UTF8.GetBytes($Script)
+    $remoteBase64 = [Convert]::ToBase64String($remoteBytes)
+    Invoke-ReadOnlySsh -RemoteCommand "printf '%s' '$remoteBase64' | base64 -d | bash" -AllowFailure:$AllowFailure
+}
+
 function Write-Section {
     param([string]$Title)
 
@@ -181,6 +195,7 @@ function Get-WgSnapshot {
             AllowedIp = $parts[3]
             Endpoint = $parts[2]
             HandshakeAgeSeconds = $age
+            PersistentKeepalive = if ($parts.Count -ge 8) { $parts[7] } else { "off" }
             RxBytes = $rx
             TxBytes = $tx
         }
@@ -191,6 +206,13 @@ function Get-WgSnapshot {
         Peers = $peers
         RawOutput = $result.Output
     }
+}
+
+function Test-KeepaliveOff {
+    param([object]$Value)
+
+    $text = "$Value".Trim()
+    return (-not $text -or $text -eq "0" -or $text -eq "off")
 }
 
 function Write-WgSummary {
@@ -214,8 +236,142 @@ function Write-WgSummary {
         Select-Object -First 10 |
         ForEach-Object {
             $age = if ($null -eq $_.HandshakeAgeSeconds) { "never" } else { "$($_.HandshakeAgeSeconds)s" }
-            Write-Host "peer=$($_.AllowedIp) endpoint=$($_.Endpoint) handshake_age=$age rx=$($_.RxBytes) tx=$($_.TxBytes)"
+            Write-Host "peer=$($_.AllowedIp) endpoint=$($_.Endpoint) handshake_age=$age keepalive=$($_.PersistentKeepalive) rx=$($_.RxBytes) tx=$($_.TxBytes)"
         }
+}
+
+function Write-PeerKeepaliveSummary {
+    param([pscustomobject]$Snapshot)
+
+    Write-Section "Peer keepalive summary"
+    if ($Snapshot.ExitCode -ne 0) {
+        Write-Host "keepalive_summary_failed=true"
+        return
+    }
+
+    $peers = @($Snapshot.Peers)
+    $keepaliveOff = @($peers | Where-Object { Test-KeepaliveOff $_.PersistentKeepalive })
+    $keepaliveOn = @($peers | Where-Object { -not (Test-KeepaliveOff $_.PersistentKeepalive) })
+    $stale600 = @($peers | Where-Object { $_.Endpoint -and $_.Endpoint -ne "(none)" -and $null -ne $_.HandshakeAgeSeconds -and $_.HandshakeAgeSeconds -gt 600 })
+    $stale3600 = @($peers | Where-Object { $_.Endpoint -and $_.Endpoint -ne "(none)" -and $null -ne $_.HandshakeAgeSeconds -and $_.HandshakeAgeSeconds -gt 3600 })
+    $never = @($peers | Where-Object { $null -eq $_.HandshakeAgeSeconds })
+
+    Write-Host "peers_total=$($peers.Count) keepalive_off=$($keepaliveOff.Count) keepalive_on=$($keepaliveOn.Count) target_mobile_keepalive_seconds=$script:TelegramTargetKeepalive"
+    Write-Host "stale_600s_with_endpoint=$($stale600.Count) stale_3600s_with_endpoint=$($stale3600.Count) never_handshake=$($never.Count)"
+
+    $stale600 |
+        Sort-Object HandshakeAgeSeconds -Descending |
+        Select-Object -First 10 |
+        ForEach-Object {
+            Write-Host "stale_peer=$($_.AllowedIp) endpoint=$($_.Endpoint) handshake_age=$($_.HandshakeAgeSeconds)s keepalive=$($_.PersistentKeepalive)"
+        }
+}
+
+function Write-TelegramMobileReadiness {
+    $remoteScript = @'
+set -euo pipefail
+container="__CONTAINER__"
+iface="__INTERFACE__"
+target_mtu="__TARGET_MTU__"
+target_keepalive="__TARGET_KEEPALIVE__"
+
+live_mtu="$(docker exec "$container" sh -c "cat /sys/class/net/$iface/mtu" 2>/dev/null || true)"
+config_mtu="$(docker exec "$container" sh -c "awk -F= '/^[[:space:]]*MTU[[:space:]]*=/{gsub(/[[:space:]]/,\"\",\$2); print \$2; exit}' /opt/amnezia/awg/awg0.conf" 2>/dev/null || true)"
+
+if [ "$live_mtu" = "$target_mtu" ]; then live_ok=true; else live_ok=false; fi
+if [ "$config_mtu" = "$target_mtu" ]; then config_ok=true; else config_ok=false; fi
+
+echo "target_client_mtu=$target_mtu"
+echo "target_client_keepalive_seconds=$target_keepalive"
+echo "server_awg0_mtu=${live_mtu:-unknown} ok=$live_ok"
+echo "server_config_mtu=${config_mtu:-unknown} ok=$config_ok"
+echo "pilot_profile_required=MTU=$target_mtu PersistentKeepalive=$target_keepalive"
+'@
+
+    $remoteScript = $remoteScript.
+        Replace("__CONTAINER__", $script:Container).
+        Replace("__INTERFACE__", $script:Interface).
+        Replace("__TARGET_MTU__", "$script:TelegramTargetMtu").
+        Replace("__TARGET_KEEPALIVE__", "$script:TelegramTargetKeepalive")
+
+    Write-CommandResult -Title "Telegram mobile readiness" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
+}
+
+function Write-TelegramMssCounters {
+    $remoteScript = @'
+set -uo pipefail
+container="__CONTAINER__"
+iface="__INTERFACE__"
+mss="__MSS__"
+
+rules="$(docker exec "$container" iptables -t mangle -S FORWARD 2>/dev/null || true)"
+counters="$(docker exec "$container" iptables -t mangle -vnL FORWARD --line-numbers 2>/dev/null || true)"
+
+telegram_rules="$(printf '%s\n' "$rules" | grep -E '(91\.108\.0\.0/16|149\.154\.0\.0/16)' | grep -c 'TCPMSS' || true)"
+generic_in="$(printf '%s\n' "$rules" | grep -F -- "-i $iface" | grep -F -- "--set-mss $mss" | grep -Ev '(91\.108\.0\.0/16|149\.154\.0\.0/16)' | wc -l | tr -d ' ')"
+generic_out="$(printf '%s\n' "$rules" | grep -F -- "-o $iface" | grep -F -- "--set-mss $mss" | grep -Ev '(91\.108\.0\.0/16|149\.154\.0\.0/16)' | wc -l | tr -d ' ')"
+
+echo "telegram_mss_rules_count=$telegram_rules"
+echo "generic_awg0_mss_in=$generic_in"
+echo "generic_awg0_mss_out=$generic_out"
+echo "fallback_target_mss=$mss"
+printf '%s\n' "$counters" | awk '/TCPMSS/ {print}'
+'@
+
+    $remoteScript = $remoteScript.
+        Replace("__CONTAINER__", $script:Container).
+        Replace("__INTERFACE__", $script:Interface).
+        Replace("__MSS__", "$script:TelegramMss")
+
+    Write-CommandResult -Title "Telegram MSS counters" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
+}
+
+function Write-TelegramApiAvailability {
+    $telegramPingCount = [Math]::Min([Math]::Max($script:PingCount, 1), 20)
+    $remoteCommand = "getent ahostsv4 api.telegram.org | head -n 3 || true; curl -4 -sS -L --max-time $script:DownloadTimeoutSeconds -o /dev/null -w 'http_code=%{http_code} remote_ip=%{remote_ip} time_namelookup=%{time_namelookup} time_connect=%{time_connect} time_appconnect=%{time_appconnect} time_starttransfer=%{time_starttransfer} time_total=%{time_total} speed_download=%{speed_download}\n' https://api.telegram.org/ || true; ping -4 -c $telegramPingCount -i 0.2 api.telegram.org | tail -n 4 || true"
+    Write-CommandResult -Title "Telegram API availability" -Result (Invoke-ReadOnlySsh -RemoteCommand $remoteCommand -AllowFailure)
+}
+
+function Write-GatewayJitter {
+    param(
+        [string]$Gateway,
+        [pscustomobject]$PingResult
+    )
+
+    Write-Section "Gateway jitter"
+    if (-not $Gateway) {
+        Write-Host "gateway=unknown"
+        return
+    }
+
+    $text = ($PingResult.Output | Out-String)
+    $loss = "unknown"
+    $min = "unknown"
+    $avg = "unknown"
+    $max = "unknown"
+    $mdev = "unknown"
+    $lossMatch = [regex]::Match($text, "([0-9.]+)% packet loss")
+    if ($lossMatch.Success) {
+        $loss = $lossMatch.Groups[1].Value
+    }
+    $rttMatch = [regex]::Match($text, "rtt min/avg/max/(?:mdev|stddev) = ([0-9.]+)/([0-9.]+)/([0-9.]+)/([0-9.]+) ms")
+    if ($rttMatch.Success) {
+        $min = $rttMatch.Groups[1].Value
+        $avg = $rttMatch.Groups[2].Value
+        $max = $rttMatch.Groups[3].Value
+        $mdev = $rttMatch.Groups[4].Value
+    }
+
+    Write-Host "gateway=$Gateway packet_loss_percent=$loss rtt_min_ms=$min rtt_avg_ms=$avg rtt_max_ms=$max rtt_mdev_ms=$mdev"
+    if ($max -ne "unknown" -and [double]$max -ge 100) {
+        Write-Host "jitter_warning=true reason=gateway_rtt_max_ge_100ms"
+    }
+    elseif ($mdev -ne "unknown" -and [double]$mdev -ge 20) {
+        Write-Host "jitter_warning=true reason=gateway_rtt_mdev_ge_20ms"
+    }
+    else {
+        Write-Host "jitter_warning=false"
+    }
 }
 
 function Write-TrafficDelta {
@@ -297,29 +453,40 @@ $script:SshPort = $SshPort
 $script:Container = $Container
 $script:Interface = $Interface
 $script:SampleSeconds = $SampleSeconds
+$script:PingCount = $PingCount
 $script:ConnectTimeoutSeconds = $ConnectTimeoutSeconds
 $script:ResolvedKeyPath = Resolve-SshKey -ExplicitKeyPath $KeyPath
+$script:DownloadTimeoutSeconds = $DownloadTimeoutSeconds
+$script:TelegramTargetMtu = $TelegramTargetMtu
+$script:TelegramTargetKeepalive = $TelegramTargetKeepalive
+$script:TelegramMss = $TelegramMss
 
 Write-Host "AutostopVPN read-only network check"
 Write-Host "target=${SshUser}@${HostName}:$SshPort container=$Container interface=$Interface key=$script:ResolvedKeyPath"
-Write-Host "no_restart=true no_peer_changes=true no_mtu_changes=true"
+Write-Host "no_restart=true no_peer_changes=true no_mtu_changes=true no_iptables_changes=true"
 
 Write-CommandResult -Title "Server clock" -Result (Invoke-ReadOnlySsh -RemoteCommand "date -Is" -AllowFailure)
 Write-CommandResult -Title "Service state" -Result (Invoke-ReadOnlySsh -RemoteCommand "systemctl is-active amnezia-dashboard.service amnezia-traffic-collector.timer amnezia-traffic-collector.service" -AllowFailure)
 Write-CommandResult -Title "VPN listener" -Result (Invoke-ReadOnlySsh -RemoteCommand "docker ps --filter name=$Container --format '{{.Names}} {{.Status}} {{.Ports}}'; ss -lunp | grep 47895 || true" -AllowFailure)
-Write-CommandResult -Title "Route to internet" -Result (Invoke-ReadOnlySsh -RemoteCommand "ip route get 1.1.1.1" -AllowFailure)
-
 $routeResult = Invoke-ReadOnlySsh -RemoteCommand "ip route get 1.1.1.1" -AllowFailure
+Write-CommandResult -Title "Route to internet" -Result $routeResult
 $routeText = ($routeResult.Output | Out-String)
 $gatewayMatch = [regex]::Match($routeText, "\svia\s+([0-9.]+)\s")
 if ($gatewayMatch.Success) {
     $gateway = $gatewayMatch.Groups[1].Value
-    Write-CommandResult -Title "Ping provider gateway $gateway" -Result (Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i 0.2 $gateway" -AllowFailure)
+    $gatewayPingResult = Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i 0.2 $gateway" -AllowFailure
+    Write-CommandResult -Title "Ping provider gateway $gateway" -Result $gatewayPingResult
+    Write-GatewayJitter -Gateway $gateway -PingResult $gatewayPingResult
 }
 
 Write-CommandResult -Title "Ping 1.1.1.1" -Result (Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i 0.2 1.1.1.1" -AllowFailure)
 Write-CommandResult -Title "Ping 8.8.8.8" -Result (Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i 0.2 8.8.8.8" -AllowFailure)
-Write-WgSummary -Snapshot (Get-WgSnapshot)
+$wgSnapshot = Get-WgSnapshot
+Write-WgSummary -Snapshot $wgSnapshot
+Write-TelegramMobileReadiness
+Write-PeerKeepaliveSummary -Snapshot $wgSnapshot
+Write-TelegramMssCounters
+Write-TelegramApiAvailability
 Write-TrafficDelta
 
 if ($DownloadBytes -gt 0) {

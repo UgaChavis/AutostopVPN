@@ -37,3 +37,5 @@ The audit records:
 ## High-Risk Helpers
 
 `apply_telegram_mtu_fix.ps1` changes the live VPN container MTU. Prefer `-DryRun` or `-WhatIf` first, use the shared SSH key resolver, and avoid running it during provider instability unless the MTU fix is the intended action.
+
+`apply_telegram_mss_fallback.ps1` changes live container firewall rules and the container start script. Prefer `-DryRun -NoRestart` or `-WhatIf -NoRestart` first, use it only after the mobile keepalive pilot, and do not treat it as part of normal read-only diagnostics.

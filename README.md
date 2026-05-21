@@ -37,6 +37,7 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 - [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut with a generated shield icon
 - [remove_autostopvpn.ps1](remove_autostopvpn.ps1): remove the local install and desktop shortcut
 - [apply_telegram_mtu_fix.ps1](apply_telegram_mtu_fix.ps1): high-risk MTU helper with `-DryRun` and `-WhatIf` support
+- [apply_telegram_mss_fallback.ps1](apply_telegram_mss_fallback.ps1): high-risk Telegram MSS fallback helper with `-DryRun`, `-WhatIf`, and `-NoRestart` support
 - [LOCAL_INSTALL.md](LOCAL_INSTALL.md): local install and shortcut instructions
 - [AMNEZIA_VPN_MONITORING.md](AMNEZIA_VPN_MONITORING.md): deployment and rollback runbook
 - [MAINTENANCE.md](MAINTENANCE.md): cleanup, optimization, and staged-sync checklist
@@ -94,6 +95,7 @@ Important `amnezia_server_info.json` fields:
 If `bandwidth_limit_mbps` is empty, the collector falls back to the speed of the detected default network interface.
 If `wireguard_mtu` is set, the collector can compare it to the live `awg0` MTU and the probed path MTU.
 The current recommended value is `1280` after mobile Telegram media testing.
+The current mobile Telegram pilot profile standard is `MTU=1280` and `PersistentKeepalive=25`.
 The collector also caches endpoint geo labels and MTU probe results so normal refresh cycles stay light.
 
 ## Generated Data
@@ -165,6 +167,19 @@ During a provider outage, use the read-only monitor from the local workspace:
 .\check_autostopvpn_network.ps1 -PingCount 10 -SampleSeconds 15
 ```
 
+For a Telegram mobile baseline before changing pilot phones, use a longer read-only sample:
+
+```powershell
+.\check_autostopvpn_network.ps1 -PingCount 100 -SampleSeconds 30
+```
+
+The monitor includes Telegram-focused read-only sections:
+
+- `Telegram mobile readiness`: live `awg0` MTU, config MTU, and the pilot client standard
+- `Peer keepalive summary`: keepalive counts and stale handshakes
+- `Telegram MSS counters`: current Telegram MSS clamp counters inside the container
+- `Gateway jitter`: parsed packet loss and RTT spread to the provider gateway
+
 For a small server-side download sample, opt in explicitly:
 
 ```powershell
@@ -178,6 +193,13 @@ The Telegram MTU helper changes the live container. Preview it before applying:
 ```powershell
 .\apply_telegram_mtu_fix.ps1 -DryRun
 .\apply_telegram_mtu_fix.ps1 -WhatIf
+```
+
+The Telegram MSS fallback helper changes live container firewall rules and the container start script. It is prepared for the post-pilot fallback path only:
+
+```powershell
+.\apply_telegram_mss_fallback.ps1 -DryRun -NoRestart
+.\apply_telegram_mss_fallback.ps1 -WhatIf -NoRestart
 ```
 
 ## Working Model
