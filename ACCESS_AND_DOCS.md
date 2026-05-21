@@ -13,7 +13,7 @@ This file is the quick orientation sheet for the VPN workspace and for the exter
 
 The shared access notes live outside this Git repository:
 
-- `C:\Users\User\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`
+- `%USERPROFILE%\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`
 
 Useful files in that folder:
 
@@ -29,9 +29,9 @@ Useful files in that folder:
 
 Preferred local SSH key paths:
 
-- `C:\Users\User\.ssh\codex_autostopcrm`
-- `C:\Users\User\.ssh\codex_autostopcrm_key`
-- `C:\Users\User\.ssh\codex_autostopvpn`
+- `%USERPROFILE%\.ssh\codex_autostopcrm`
+- `%USERPROFILE%\.ssh\codex_autostopcrm_key`
+- `%USERPROFILE%\.ssh\codex_autostopvpn`
 
 Environment variable overrides:
 

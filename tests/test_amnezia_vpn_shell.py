@@ -147,6 +147,12 @@ class AmneziaVpnShellTests(unittest.TestCase):
     def test_format_endpoint_location_returns_host_for_public_ips_without_lookup(self) -> None:
         self.assertEqual(shell._format_endpoint_location("8.8.8.8:51820"), "8.8.8.8")
 
+    def test_format_sync_status_text_keeps_header_contract(self) -> None:
+        self.assertEqual(
+            shell._format_sync_status_text("2026-04-18T03:00:00+07:00", "5s", 1.0),
+            "ssh tunnel // live peer telemetry // matrix load • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
+        )
+
     def test_poll_refresh_results_dispatches_success_on_main_thread(self) -> None:
         app = shell.ShellApp.__new__(shell.ShellApp)
         app._closed = False

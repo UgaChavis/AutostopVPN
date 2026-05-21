@@ -32,12 +32,14 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 - [open_amnezia_dashboard.ps1](open_amnezia_dashboard.ps1): PowerShell launcher for the native shell app
 - [open_amnezia_dashboard.cmd](open_amnezia_dashboard.cmd): cmd wrapper for the PowerShell launcher
 - [check_autostopvpn_network.ps1](check_autostopvpn_network.ps1): read-only outage monitor for server reachability, peer handshakes, and light traffic deltas
+- [audit_autostopvpn.ps1](audit_autostopvpn.ps1): read-only maintenance audit for cleanup, docs, risk markers, and tests
 - [start_autostopvpn.ps1](start_autostopvpn.ps1): stable desktop entrypoint for the installed app
 - [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut with a generated shield icon
 - [remove_autostopvpn.ps1](remove_autostopvpn.ps1): remove the local install and desktop shortcut
-- [apply_telegram_mtu_fix.ps1](apply_telegram_mtu_fix.ps1): apply the server-side MTU helper and sync the dashboard metadata
+- [apply_telegram_mtu_fix.ps1](apply_telegram_mtu_fix.ps1): high-risk MTU helper with `-DryRun` and `-WhatIf` support
 - [LOCAL_INSTALL.md](LOCAL_INSTALL.md): local install and shortcut instructions
 - [AMNEZIA_VPN_MONITORING.md](AMNEZIA_VPN_MONITORING.md): deployment and rollback runbook
+- [MAINTENANCE.md](MAINTENANCE.md): cleanup, optimization, and staged-sync checklist
 - [tests/test_amnezia_traffic_collector.py](tests/test_amnezia_traffic_collector.py): unit tests for the collector logic
 
 ## Runtime Flow
@@ -118,6 +120,12 @@ Run the test suite:
 python -m unittest discover -s tests -v
 ```
 
+Run the maintenance audit before cleanup or optimization work:
+
+```powershell
+.\audit_autostopvpn.ps1 -RunTests
+```
+
 Generate reports without talking to Docker:
 
 ```powershell
@@ -164,6 +172,13 @@ For a small server-side download sample, opt in explicitly:
 ```
 
 The monitor does not restart services, change peer configuration, or change MTU. It only reads service state, `wg show` counters, routes, pings, and the optional HTTP sample.
+
+The Telegram MTU helper changes the live container. Preview it before applying:
+
+```powershell
+.\apply_telegram_mtu_fix.ps1 -DryRun
+.\apply_telegram_mtu_fix.ps1 -WhatIf
+```
 
 ## Working Model
 

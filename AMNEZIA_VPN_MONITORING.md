@@ -89,6 +89,13 @@ docker exec amnezia-awg2 cat /sys/class/net/awg0/mtu
 
 This is a tunnel-level fix. Telegram itself does not need any special configuration if the VPN path is clean.
 
+The local helper `apply_telegram_mtu_fix.ps1` is intentionally treated as high risk because it changes the live container MTU. Preview the planned SSH and SCP operations before applying:
+
+```powershell
+.\apply_telegram_mtu_fix.ps1 -DryRun
+.\apply_telegram_mtu_fix.ps1 -WhatIf
+```
+
 ## Provider Outage Watch Mode
 
 When packet loss is visible on the provider network, keep the VPN runtime untouched and collect evidence instead.

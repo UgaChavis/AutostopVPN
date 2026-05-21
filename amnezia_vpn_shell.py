@@ -178,6 +178,10 @@ def _format_snapshot_day(updated_at: object) -> str:
     return parsed.strftime("%Y-%m-%d")
 
 
+def _format_sync_status_text(snapshot_label: str, age_label: str, refresh_seconds: float) -> str:
+    return f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+
+
 def _split_endpoint(endpoint: object) -> str:
     value = str(endpoint or "").strip()
     if not value:
@@ -1653,7 +1657,7 @@ class ShellApp:
             self._last_snapshot_label = snapshot_label
 
             if repeated_snapshot:
-                status_text = f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+                status_text = _format_sync_status_text(snapshot_label, age_label, refresh_seconds)
                 self._status_base_text = status_text
                 self.updated_label.configure(text=status_text)
                 self._card_value_labels["snapshot"].configure(text=str(model.get("updated_clock", snapshot_label)))
@@ -1675,7 +1679,7 @@ class ShellApp:
 
             self.root.title(f"Autostop VPN Control :: {str(model['bandwidth_state_label']).upper()}")
             self._set_status_mode("online")
-            status_text = f"{HEADER_BASE_TEXT} • SYNC {snapshot_label} | AGE {age_label} | STEP {refresh_seconds:g}s"
+            status_text = _format_sync_status_text(snapshot_label, age_label, refresh_seconds)
             self._status_base_text = status_text
             self.updated_label.configure(text=status_text)
             self._apply_peer_filter()

@@ -448,18 +448,32 @@ def get_ping_metrics() -> Dict[str, object]:
     }
 
 
-def get_path_mtu_probe() -> Dict[str, object]:
+def get_cached_transport_probe(current_time: datetime) -> Optional[Dict[str, object]]:
     cached = load_transport_cache()
     cached_result = cached.get("result", {})
     cached_at = parse_iso_datetime(cached.get("updated_at"))
-    if isinstance(cached_result, dict) and cached_at is not None:
-        cached_matches_config = (
-            cached_result.get("target") == MTU_PROBE_TARGET
-            and bool(cached_result.get("enabled")) == MTU_PROBE_ENABLED
-        )
-        age_seconds = max((now_local() - cached_at).total_seconds(), 0.0)
-        if cached_matches_config and age_seconds < MTU_PROBE_CACHE_SECONDS:
-            return cached_result
+    if not isinstance(cached_result, dict) or cached_at is None:
+        return None
+
+    cached_matches_config = (
+        cached_result.get("target") == MTU_PROBE_TARGET
+        and bool(cached_result.get("enabled")) == MTU_PROBE_ENABLED
+    )
+    age_seconds = max((current_time - cached_at).total_seconds(), 0.0)
+    if cached_matches_config and age_seconds < MTU_PROBE_CACHE_SECONDS:
+        return cached_result
+    return None
+
+
+def save_transport_probe_result(result: Dict[str, object], current_time: datetime) -> None:
+    save_json(TRANSPORT_CACHE_FILE, {"updated_at": current_time.isoformat(), "result": result})
+
+
+def get_path_mtu_probe() -> Dict[str, object]:
+    current_time = now_local()
+    cached_result = get_cached_transport_probe(current_time)
+    if cached_result is not None:
+        return cached_result
 
     if not MTU_PROBE_ENABLED:
         result = {
@@ -470,7 +484,7 @@ def get_path_mtu_probe() -> Dict[str, object]:
             "estimated_path_mtu": None,
             "tested_payloads": [],
         }
-        save_json(TRANSPORT_CACHE_FILE, {"updated_at": now_local().isoformat(), "result": result})
+        save_transport_probe_result(result, current_time)
         return result
 
     ip_overhead = 48 if ":" in MTU_PROBE_TARGET else 28
@@ -490,7 +504,7 @@ def get_path_mtu_probe() -> Dict[str, object]:
                 "estimated_path_mtu": payload + ip_overhead,
                 "tested_payloads": tested_payloads,
             }
-            save_json(TRANSPORT_CACHE_FILE, {"updated_at": now_local().isoformat(), "result": result})
+            save_transport_probe_result(result, current_time)
             return result
 
     result = {
@@ -501,7 +515,7 @@ def get_path_mtu_probe() -> Dict[str, object]:
         "estimated_path_mtu": None,
         "tested_payloads": tested_payloads,
     }
-    save_json(TRANSPORT_CACHE_FILE, {"updated_at": now_local().isoformat(), "result": result})
+    save_transport_probe_result(result, current_time)
     return result
 
 

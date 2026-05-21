@@ -4,12 +4,12 @@ This file is the project orientation sheet for Codex and maintainers.
 
 ## Canonical Locations
 
-- Local workspace: `C:\Users\User\Desktop\AutostopVPN`
+- Local workspace: `%USERPROFILE%\Desktop\AutostopVPN`
 - Local install target: `%LOCALAPPDATA%\AutostopVPN`
-- Desktop launcher: `C:\Users\User\Desktop\Autostop VPN.lnk`
+- Desktop launcher: `%USERPROFILE%\Desktop\Autostop VPN.lnk`
 - GitHub VPN branch: `autostopVPN`
 - Server mirror path: `/opt/autostopcrm`
-- External access documentation root: `C:\Users\User\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`
+- External access documentation root: `%USERPROFILE%\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`
 
 ## Main Files
 
@@ -21,13 +21,16 @@ This file is the project orientation sheet for Codex and maintainers.
 - `amnezia_server_info.json`: server metadata, SSH details, bandwidth limit, notes
 - `open_amnezia_dashboard.ps1` and `open_amnezia_dashboard.cmd`: Windows shell launchers
 - `check_autostopvpn_network.ps1`: read-only outage monitor for SSH, provider loss, WireGuard handshakes, and traffic deltas
+- `audit_autostopvpn.ps1`: read-only maintenance audit for status, size hotspots, stale markers, hard-coded paths, ignored artifacts, and tests
 - the shell app keeps the SSH tunnel hidden, starts server monitoring while the window is open, stops it on close, and uses a single desktop window
 - `start_autostopvpn.ps1`: stable desktop entrypoint
 - `install_autostopvpn.ps1`: local install and desktop shortcut creation
 - `remove_autostopvpn.ps1`: local uninstall
 - `AMNEZIA_VPN_MONITORING.md`: operator runbook
 - `LOCAL_INSTALL.md`: local install guide
+- `MAINTENANCE.md`: cleanup, optimization, and staged-sync checklist
 - `tests/test_amnezia_traffic_collector.py`: logic tests
+- `tests/test_amnezia_vpn_shell.py`: shell view-model and refresh tests
 - `ACCESS_AND_DOCS.md`: repository navigation and access-key lookup guide
 
 ## Runtime Flow
@@ -75,11 +78,19 @@ This file is the project orientation sheet for Codex and maintainers.
 
 ## Verification Checklist
 
+- `.\audit_autostopvpn.ps1 -RunTests`
 - `python -m unittest discover -s tests -v`
 - `python .\amnezia_traffic_collector.py doctor`
 - `python .\amnezia_traffic_collector.py status`
 - confirm GitHub branch `autostopVPN` matches local files
 - confirm the same VPN files are present on the server mirror
+
+## Maintenance Rules
+
+- Keep the maintenance pass staged: local verification, GitHub branch sync, then a separately confirmed server mirror sync.
+- Delete only proven junk: ignored caches, generated runtime output, duplicate docs, or files replaced by a verified equivalent.
+- Treat `apply_telegram_mtu_fix.ps1` as a high-risk helper because it changes live container MTU; run `-DryRun` or `-WhatIf` before applying.
+- Keep large refactors incremental. Preserve the dashboard JSON shape and the native shell refresh contract.
 
 ## Safe Change Rule
 

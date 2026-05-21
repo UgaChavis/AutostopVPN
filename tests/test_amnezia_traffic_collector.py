@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from contextlib import ExitStack, redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +38,8 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
         stack.enter_context(patch.object(collector, "SERVER_INFO_FILE", data_dir / "server_info.json"))
         stack.enter_context(patch.object(collector, "WEB_SUMMARY_FILE", data_dir / "web" / "dashboard.json"))
         stack.enter_context(patch.object(collector, "WEB_INDEX_FILE", data_dir / "web" / "index.html"))
+        stack.enter_context(patch.object(collector, "GEO_CACHE_FILE", data_dir / "geo_cache.json"))
+        stack.enter_context(patch.object(collector, "TRANSPORT_CACHE_FILE", data_dir / "transport_probe.json"))
 
     def test_build_peer_rows_accumulates_deltas_and_marks_active(self) -> None:
         peer = {
@@ -172,6 +174,29 @@ class AmneziaTrafficCollectorTests(unittest.TestCase):
 
         self.assertEqual(probe["estimated_path_mtu"], 1500)
         self.assertEqual(probe["tested_payloads"], [1472])
+
+    def test_get_cached_transport_probe_requires_fresh_matching_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, ExitStack() as stack:
+            self._patch_repo_paths(stack, Path(temp_dir))
+            stack.enter_context(patch.object(collector, "MTU_PROBE_TARGET", "1.1.1.1"))
+            stack.enter_context(patch.object(collector, "MTU_PROBE_ENABLED", True))
+            stack.enter_context(patch.object(collector, "MTU_PROBE_CACHE_SECONDS", 3600))
+            collector.save_transport_probe_result(
+                {
+                    "target": "1.1.1.1",
+                    "enabled": True,
+                    "ok": True,
+                    "estimated_path_mtu": 1500,
+                },
+                self.current_time,
+            )
+
+            fresh = collector.get_cached_transport_probe(self.current_time + timedelta(seconds=30))
+            stale = collector.get_cached_transport_probe(self.current_time + timedelta(seconds=7200))
+
+        self.assertIsNotNone(fresh)
+        self.assertEqual(fresh["estimated_path_mtu"], 1500)
+        self.assertIsNone(stale)
 
     def test_get_path_mtu_probe_ignores_cache_for_different_target(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, ExitStack() as stack:
