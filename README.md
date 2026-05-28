@@ -38,7 +38,7 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 - [remove_autostopvpn.ps1](remove_autostopvpn.ps1): remove the local install and desktop shortcut
 - [apply_telegram_keepalive_fix.ps1](apply_telegram_keepalive_fix.ps1): high-risk keepalive helper for all mobile peers with `-DryRun`, `-WhatIf`, and rollback support
 - [apply_telegram_mtu_fix.ps1](apply_telegram_mtu_fix.ps1): high-risk MTU helper with `-DryRun` and `-WhatIf` support
-- [apply_telegram_mss_fallback.ps1](apply_telegram_mss_fallback.ps1): high-risk Telegram MSS fallback helper with `-DryRun`, `-WhatIf`, and `-NoRestart` support
+- [apply_telegram_mss_fallback.ps1](apply_telegram_mss_fallback.ps1): high-risk Telegram MSS fallback helper with `-DryRun`, `-WhatIf`, `-NoRestart`, and rollback support
 - [LOCAL_INSTALL.md](LOCAL_INSTALL.md): local install and shortcut instructions
 - [AMNEZIA_VPN_MONITORING.md](AMNEZIA_VPN_MONITORING.md): deployment and rollback runbook
 - [MAINTENANCE.md](MAINTENANCE.md): cleanup, optimization, and staged-sync checklist
@@ -98,6 +98,7 @@ If `wireguard_mtu` is set, the collector can compare it to the live `awg0` MTU a
 The current recommended value is `1280` after mobile Telegram media testing.
 The current mobile Telegram profile standard is `MTU=1280` and `PersistentKeepalive=25`.
 Server-side peer keepalive is managed by `apply_telegram_keepalive_fix.ps1`; phone profiles should still be updated or re-imported with the same values for the best mobile NAT behavior.
+The post-keepalive server fallback is a generic TCP MSS clamp through `awg0` at `1240`, alongside the existing Telegram-specific MSS rules.
 The collector also caches endpoint geo labels and MTU probe results so normal refresh cycles stay light.
 
 ## Generated Data
@@ -206,11 +207,13 @@ The Telegram MTU helper changes the live container. Preview it before applying:
 .\apply_telegram_mtu_fix.ps1 -WhatIf
 ```
 
-The Telegram MSS fallback helper changes live container firewall rules and the container start script. It is prepared for the post-keepalive fallback path only:
+The Telegram MSS fallback helper changes live container firewall rules and the container start script. It is the current post-keepalive fallback path:
 
 ```powershell
 .\apply_telegram_mss_fallback.ps1 -DryRun -NoRestart
 .\apply_telegram_mss_fallback.ps1 -WhatIf -NoRestart
+.\apply_telegram_mss_fallback.ps1 -NoRestart
+.\apply_telegram_mss_fallback.ps1 -RollbackBackupPath /root/autostopvpn-backups/start.sh.mss.bak.YYYYMMDD-HHMMSS -NoRestart
 ```
 
 ## Working Model

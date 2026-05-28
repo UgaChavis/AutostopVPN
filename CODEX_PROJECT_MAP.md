@@ -22,8 +22,9 @@ This file is the project orientation sheet for Codex and maintainers.
 - `open_amnezia_dashboard.ps1` and `open_amnezia_dashboard.cmd`: Windows shell launchers
 - `check_autostopvpn_network.ps1`: read-only outage monitor for SSH, provider loss, WireGuard handshakes, Telegram mobile readiness, MSS counters, gateway jitter, and traffic deltas
 - `apply_telegram_keepalive_fix.ps1`: high-risk helper for applying `PersistentKeepalive=25` to all peers with `-DryRun`, `-WhatIf`, and rollback support
-- `apply_telegram_mss_fallback.ps1`: high-risk helper for post-keepalive generic TCP MSS fallback with `-DryRun`, `-WhatIf`, and `-NoRestart`
+- `apply_telegram_mss_fallback.ps1`: high-risk helper for post-keepalive generic TCP MSS fallback with `-DryRun`, `-WhatIf`, `-NoRestart`, and rollback support
 - `audit_autostopvpn.ps1`: read-only maintenance audit for status, size hotspots, stale markers, hard-coded paths, ignored artifacts, and tests
+- current Telegram fallback state is server keepalive on all peers, `awg0` MTU `1280`, Telegram-specific MSS `1240`, and generic `awg0` TCP MSS `1240`
 - the shell app keeps the SSH tunnel hidden, starts server monitoring while the window is open, stops it on close, and uses a single desktop window
 - `start_autostopvpn.ps1`: stable desktop entrypoint
 - `install_autostopvpn.ps1`: local install and desktop shortcut creation
@@ -93,7 +94,7 @@ This file is the project orientation sheet for Codex and maintainers.
 - Delete only proven junk: ignored caches, generated runtime output, duplicate docs, or files replaced by a verified equivalent.
 - Treat `apply_telegram_keepalive_fix.ps1` as a high-risk helper because it changes live WireGuard peer keepalive and the live container config; run `-DryRun` or `-WhatIf` first and keep the backup path for rollback.
 - Treat `apply_telegram_mtu_fix.ps1` as a high-risk helper because it changes live container MTU; run `-DryRun` or `-WhatIf` before applying.
-- Treat `apply_telegram_mss_fallback.ps1` as a high-risk helper because it changes live container firewall rules and the container start script; run `-DryRun -NoRestart` or `-WhatIf -NoRestart` before applying.
+- Treat `apply_telegram_mss_fallback.ps1` as a high-risk helper because it changes live container firewall rules and the container start script; run `-DryRun -NoRestart` or `-WhatIf -NoRestart` before applying and keep the `start.sh.mss.bak.<timestamp>` backup path.
 - Keep large refactors incremental. Preserve the dashboard JSON shape and the native shell refresh contract.
 
 ## Safe Change Rule

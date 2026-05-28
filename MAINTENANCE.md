@@ -40,4 +40,4 @@ The audit records:
 
 `apply_telegram_mtu_fix.ps1` changes the live VPN container MTU. Prefer `-DryRun` or `-WhatIf` first, use the shared SSH key resolver, and avoid running it during provider instability unless the MTU fix is the intended action.
 
-`apply_telegram_mss_fallback.ps1` changes live container firewall rules and the container start script. Prefer `-DryRun -NoRestart` or `-WhatIf -NoRestart` first, use it only after the mobile keepalive rollout is tested, and do not treat it as part of normal read-only diagnostics.
+`apply_telegram_mss_fallback.ps1` changes live container firewall rules and the container start script. Prefer `-DryRun -NoRestart` or `-WhatIf -NoRestart` first, keep the generated `/root/autostopvpn-backups/start.sh.mss.bak.<timestamp>` path for rollback, use it only after the mobile keepalive rollout is tested, and do not treat it as part of normal read-only diagnostics.

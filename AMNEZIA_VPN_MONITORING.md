@@ -124,14 +124,16 @@ The local helper `apply_telegram_mtu_fix.ps1` is intentionally treated as high r
 .\apply_telegram_mtu_fix.ps1 -WhatIf
 ```
 
-If the keepalive rollout does not improve Telegram, the next server-side fallback is a generic TCP MSS clamp through `awg0`, or a dedicated Telegram MTProxy/SOCKS5 path. The MSS helper is intentionally not automatic because it changes live container firewall rules and the container start script. Preview it first and run it only during a low-traffic maintenance window:
+If the keepalive rollout does not improve Telegram, the next server-side fallback is a generic TCP MSS clamp through `awg0`, or a dedicated Telegram MTProxy/SOCKS5 path. The current post-keepalive fallback is the generic TCP MSS clamp at `1240`, alongside the existing Telegram-specific rules. The MSS helper changes live container firewall rules and the container start script, and backs up `/opt/amnezia/start.sh` to `/root/autostopvpn-backups/start.sh.mss.bak.<timestamp>` before applying changes. Preview it first and run it only during a low-traffic maintenance window:
 
 ```powershell
 .\apply_telegram_mss_fallback.ps1 -DryRun -NoRestart
 .\apply_telegram_mss_fallback.ps1 -WhatIf -NoRestart
+.\apply_telegram_mss_fallback.ps1 -NoRestart
+.\apply_telegram_mss_fallback.ps1 -RollbackBackupPath /root/autostopvpn-backups/start.sh.mss.bak.YYYYMMDD-HHMMSS -NoRestart
 ```
 
-Do not make the generic MSS fallback persistent until the `MTU=1280` and `PersistentKeepalive=25` profile standard has been tested on the phones.
+After applying the generic MSS fallback, watch normal browsing, Telegram media loading, idle reconnect, and voice notes. Roll back from the printed `start.sh.mss.bak.<timestamp>` path if non-Telegram traffic noticeably regresses.
 
 ## Provider Outage Watch Mode
 

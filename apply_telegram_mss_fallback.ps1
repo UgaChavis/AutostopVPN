@@ -7,6 +7,7 @@ param(
     [string]$Container = "",
     [string]$Interface = "awg0",
     [int]$Mss = 1240,
+    [string]$RollbackBackupPath = "",
     [switch]$NoRestart,
     [switch]$DryRun
 )
@@ -81,7 +82,8 @@ function Invoke-GuardedNativeCommand {
 function ConvertTo-RemoteCommand {
     param([Parameter(Mandatory = $true)][string]$Script)
 
-    $remoteBytes = [System.Text.Encoding]::UTF8.GetBytes($Script)
+    $normalizedScript = $Script -replace "`r`n", "`n" -replace "`r", "`n"
+    $remoteBytes = [System.Text.Encoding]::UTF8.GetBytes($normalizedScript)
     $remoteBase64 = [Convert]::ToBase64String($remoteBytes)
     return "printf '%s' '$remoteBase64' | base64 -d | bash"
 }
@@ -110,12 +112,18 @@ container="__CONTAINER__"
 iface="__INTERFACE__"
 mss="__MSS__"
 timestamp="__TIMESTAMP__"
+rollback_backup_path="__ROLLBACK_BACKUP_PATH__"
 backup_dir="/root/autostopvpn-backups"
 start_path="/opt/amnezia/start.sh"
 
-echo "container=$container interface=$iface mss=$mss no_restart=true"
+if [ -n "$rollback_backup_path" ]; then
+  mode="rollback"
+else
+  mode="apply"
+fi
+
+echo "container=$container interface=$iface mss=$mss mode=$mode no_restart=true"
 mkdir -p "$backup_dir"
-docker cp "$container:$start_path" "$backup_dir/start.sh.bak.$timestamp"
 
 apply_rule() {
   direction_name="$1"
@@ -128,10 +136,29 @@ apply_rule() {
   fi
 }
 
-apply_rule "in" "-i"
-apply_rule "out" "-o"
+remove_rule() {
+  direction_name="$1"
+  direction_flag="$2"
+  removed=0
+  while docker exec "$container" iptables -t mangle -D FORWARD "$direction_flag" "$iface" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss "$mss" 2>/dev/null; do
+    removed=$((removed + 1))
+  done
+  echo "runtime_rule_${direction_name}_removed=$removed"
+}
 
-docker exec "$container" sh -s -- "$iface" "$mss" <<'EOS'
+show_mss_rules() {
+  docker exec "$container" iptables -t mangle -vnL FORWARD --line-numbers | grep TCPMSS || true
+}
+
+apply_mss() {
+  backup_path="$backup_dir/start.sh.mss.bak.$timestamp"
+  docker cp "$container:$start_path" "$backup_path"
+  echo "backup_path=$backup_path"
+
+  apply_rule "in" "-i"
+  apply_rule "out" "-o"
+
+  docker exec -i "$container" sh -s -- "$iface" "$mss" <<'EOS'
 set -eu
 iface="$1"
 mss="$2"
@@ -171,20 +198,55 @@ rm -f "$tmp" "$block_file"
 chmod +x "$start_path" 2>/dev/null || true
 EOS
 
-docker exec "$container" iptables -t mangle -vnL FORWARD --line-numbers | grep TCPMSS || true
-echo "mss_fallback_completed=true no_restart_performed=true"
+  show_mss_rules
+  echo "mss_fallback_completed=true no_restart_performed=true"
+}
+
+rollback_mss() {
+  if [ -z "$rollback_backup_path" ]; then
+    echo "rollback_backup_missing=true"
+    exit 64
+  fi
+  if [ ! -f "$rollback_backup_path" ]; then
+    echo "rollback_backup_not_found=$rollback_backup_path"
+    exit 66
+  fi
+
+  pre_rollback_backup_path="$backup_dir/start.sh.pre-mss-rollback.bak.$timestamp"
+  docker cp "$container:$start_path" "$pre_rollback_backup_path"
+  echo "pre_rollback_backup_path=$pre_rollback_backup_path"
+  docker cp "$rollback_backup_path" "$container:$start_path"
+  docker exec "$container" chmod +x "$start_path" 2>/dev/null || true
+
+  remove_rule "in" "-i"
+  remove_rule "out" "-o"
+  show_mss_rules
+  echo "mss_fallback_rollback_completed=true no_restart_performed=true"
+}
+
+if [ "$mode" = "rollback" ]; then
+  rollback_mss
+else
+  apply_mss
+fi
 '@
 
 $remoteScript = $remoteScript.
     Replace("__CONTAINER__", $Container).
     Replace("__INTERFACE__", $Interface).
     Replace("__MSS__", "$Mss").
-    Replace("__TIMESTAMP__", $timestamp)
+    Replace("__TIMESTAMP__", $timestamp).
+    Replace("__ROLLBACK_BACKUP_PATH__", $RollbackBackupPath)
 
 $remoteCommand = ConvertTo-RemoteCommand -Script $remoteScript
 
 Write-Warning "This helper changes live container firewall rules and the container start script. Use only after the mobile pilot confirms MSS fallback is needed."
-Write-Host "target=${sshDestination}:$SshPort container=$Container interface=$Interface mss=$Mss key=$sshKey dry_run=$($DryRun.IsPresent) what_if=$($WhatIfPreference) no_restart=$($NoRestart.IsPresent)"
+if ($RollbackBackupPath) {
+    $mode = "rollback"
+} else {
+    $mode = "apply"
+}
+Write-Host "target=${sshDestination}:$SshPort container=$Container interface=$Interface mss=$Mss mode=$mode key=$sshKey dry_run=$($DryRun.IsPresent) what_if=$($WhatIfPreference) no_restart=$($NoRestart.IsPresent)"
 if (-not $NoRestart) {
     Write-Warning "NoRestart was not specified. The helper still performs no restart by design; pass -NoRestart to make that intent explicit."
 }
@@ -198,6 +260,7 @@ $sshBaseArgs = @(
     $sshDestination
 )
 
-Invoke-GuardedNativeCommand -Label "Apply Telegram MSS fallback $Mss" -FilePath "ssh" -Arguments ($sshBaseArgs + @($remoteCommand)) -Target "${sshDestination}:$SshPort"
+$label = if ($RollbackBackupPath) { "Rollback Telegram MSS fallback $Mss" } else { "Apply Telegram MSS fallback $Mss" }
+Invoke-GuardedNativeCommand -Label $label -FilePath "ssh" -Arguments ($sshBaseArgs + @($remoteCommand)) -Target "${sshDestination}:$SshPort"
 
 Write-Host "Telegram MSS fallback helper completed."
