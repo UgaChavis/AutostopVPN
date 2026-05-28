@@ -81,7 +81,8 @@ function Invoke-GuardedNativeCommand {
 function ConvertTo-RemoteCommand {
     param([Parameter(Mandatory = $true)][string]$Script)
 
-    $remoteBytes = [System.Text.Encoding]::UTF8.GetBytes($Script)
+    $normalizedScript = $Script -replace "`r`n", "`n" -replace "`r", "`n"
+    $remoteBytes = [System.Text.Encoding]::UTF8.GetBytes($normalizedScript)
     $remoteBase64 = [Convert]::ToBase64String($remoteBytes)
     return "printf '%s' '$remoteBase64' | base64 -d | bash"
 }
@@ -118,7 +119,7 @@ backup_path="$backup_dir/awg0.conf.keepalive.bak.$timestamp"
 pre_rollback_backup_path="$backup_dir/awg0.conf.keepalive.pre-rollback.bak.$timestamp"
 
 summarize_state() {
-  docker exec "$container" sh -s -- "$iface" "$keepalive" "$config_path" <<'EOS'
+  docker exec -i "$container" sh -s -- "$iface" "$keepalive" "$config_path" <<'EOS'
 set -eu
 iface="$1"
 keepalive="$2"
@@ -164,7 +165,7 @@ apply_keepalive() {
   mkdir -p "$backup_dir"
   docker cp "$container:$config_path" "$backup_path"
 
-  docker exec "$container" sh -s -- "$iface" "$keepalive" "$config_path" <<'EOS'
+  docker exec -i "$container" sh -s -- "$iface" "$keepalive" "$config_path" <<'EOS'
 set -eu
 iface="$1"
 keepalive="$2"
@@ -224,7 +225,7 @@ rollback_keepalive() {
   rollback_tmp="/tmp/awg0.conf.keepalive.rollback.$timestamp"
   docker cp "$rollback_path" "$container:$rollback_tmp"
 
-  docker exec "$container" sh -s -- "$iface" "$rollback_tmp" "$config_path" <<'EOS'
+  docker exec -i "$container" sh -s -- "$iface" "$rollback_tmp" "$config_path" <<'EOS'
 set -eu
 iface="$1"
 rollback_tmp="$2"

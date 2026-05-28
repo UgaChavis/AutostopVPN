@@ -177,6 +177,8 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertIn("Invoke-GuardedNativeCommand", text)
         self.assertIn("PersistentKeepalive", text)
         self.assertIn("persistent-keepalive", text)
+        self.assertIn("docker exec -i", text)
+        self.assertIn("normalizedScript", text)
         self.assertIn("awg0.conf.keepalive.bak", text)
         self.assertIn("Restore keepalive backup", text)
         self.assertNotIn("PrivateKey", text)
