@@ -33,6 +33,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `amnezia_vpn_shell.py`
 - `open_amnezia_dashboard.ps1`
 - `open_amnezia_dashboard.cmd`
+- `apply_telegram_keepalive_fix.ps1`
 - `apply_telegram_mtu_fix.ps1`
 - `apply_telegram_mss_fallback.ps1`
 - `tests/test_amnezia_traffic_collector.py`
@@ -88,17 +89,26 @@ Recommended order:
    - `Telegram MSS counters` shows whether current Telegram MSS clamp rules are present and receiving traffic.
    - `Gateway jitter` shows provider gateway packet loss and RTT spread.
 
-4. Run a pilot on 2-3 problem phones before changing everyone. For each pilot mobile profile, keep existing keys, endpoint, DNS, and `AllowedIPs`, and set:
+4. For the current private VPN rollout, apply keepalive to all server peers with the helper below, then update or re-import every mobile profile with the same client-side standard. Keep existing keys, endpoint, DNS, and `AllowedIPs`, and set:
 
 ```ini
 MTU = 1280
 PersistentKeepalive = 25
 ```
 
-5. Test Telegram on each pilot phone after 15 minutes of idle time, media download, voice note playback, media upload, and Wi-Fi/LTE switching.
-6. Watch the pilot for 48 hours. The pass condition is no case where Telegram only recovers after restarting the mobile app, no noticeable battery or heat complaints, and no normal browsing regression through the VPN.
+5. Test Telegram on each phone after 15 minutes of idle time, media download, voice note playback, media upload, and Wi-Fi/LTE switching.
+6. Watch the rollout for 30-60 minutes first, then a normal workday. The pass condition is no case where Telegram only recovers after restarting the mobile app, no noticeable battery or heat complaints, and no normal browsing regression through the VPN.
 
-If `Transport:` or `Telegram mobile readiness` shows `awg0 MTU` above the recommended value, fix MTU before the keepalive pilot. Apply the runtime test on the server:
+The local helper `apply_telegram_keepalive_fix.ps1` changes live WireGuard peer keepalive and edits the live container config. It backs up `awg0.conf` to `/root/autostopvpn-backups/awg0.conf.keepalive.bak.<timestamp>` before applying changes. Preview and keep the backup path:
+
+```powershell
+.\apply_telegram_keepalive_fix.ps1 -DryRun
+.\apply_telegram_keepalive_fix.ps1 -WhatIf
+.\apply_telegram_keepalive_fix.ps1
+.\apply_telegram_keepalive_fix.ps1 -RollbackBackupPath /root/autostopvpn-backups/awg0.conf.keepalive.bak.YYYYMMDD-HHMMSS
+```
+
+If `Transport:` or `Telegram mobile readiness` shows `awg0 MTU` above the recommended value, fix MTU before the keepalive rollout. Apply the runtime test on the server:
 
 ```bash
 docker exec amnezia-awg2 ip link set dev awg0 mtu 1280
@@ -114,14 +124,14 @@ The local helper `apply_telegram_mtu_fix.ps1` is intentionally treated as high r
 .\apply_telegram_mtu_fix.ps1 -WhatIf
 ```
 
-If the mobile pilot does not improve Telegram, the next server-side fallback is a generic TCP MSS clamp through `awg0`. The helper is intentionally not automatic because it changes live container firewall rules and the container start script. Preview it first and run it only during a low-traffic maintenance window:
+If the keepalive rollout does not improve Telegram, the next server-side fallback is a generic TCP MSS clamp through `awg0`, or a dedicated Telegram MTProxy/SOCKS5 path. The MSS helper is intentionally not automatic because it changes live container firewall rules and the container start script. Preview it first and run it only during a low-traffic maintenance window:
 
 ```powershell
 .\apply_telegram_mss_fallback.ps1 -DryRun -NoRestart
 .\apply_telegram_mss_fallback.ps1 -WhatIf -NoRestart
 ```
 
-Do not mass-replace user profiles or make the MSS fallback persistent until the pilot confirms that the safer `MTU=1280` and `PersistentKeepalive=25` profile standard is insufficient.
+Do not make the generic MSS fallback persistent until the `MTU=1280` and `PersistentKeepalive=25` profile standard has been tested on the phones.
 
 ## Provider Outage Watch Mode
 
@@ -153,6 +163,7 @@ Avoid while active handshakes still exist:
 - rebuilding, replacing, or restarting `amnezia-awg2`
 - editing `/opt/amnezia/awg/awg0.conf`
 - running `wg set` or removing peers
+- applying keepalive rollout while provider loss is visible
 - changing MTU repeatedly while packet loss is already visible at the provider gateway
 - restarting the collector/dashboard loop as a way to diagnose VPN transport
 
