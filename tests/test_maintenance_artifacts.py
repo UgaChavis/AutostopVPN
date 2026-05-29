@@ -89,9 +89,15 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertIn("Telegram mobile readiness", text)
         self.assertIn("Peer keepalive summary", text)
         self.assertIn("Telegram MSS counters", text)
+        self.assertIn("Alternate UDP endpoint", text)
+        self.assertIn("AlternateUdpPort", text)
+        self.assertIn("udp_${alternate_port}_forward_present", text)
+        self.assertIn("udp_${target_port}_published", text)
+        self.assertIn("'$4 ~ suffix", text)
         self.assertIn("Gateway jitter", text)
         self.assertIn("no_iptables_changes=true", text)
         self.assertIn("PersistentKeepalive", text)
+        self.assertIn("mobile_profile_endpoint", text)
         self.assertIn("mobile_profile_required", text)
         self.assertNotIn("pilot_profile_required", text)
         self.assertNotIn("ip link set", text)
@@ -101,6 +107,136 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertNotIn("iptables -A", text)
         self.assertNotIn("iptables -I", text)
         self.assertNotIn("iptables -D", text)
+
+    def test_udp443_forward_helper_has_safety_guards_and_rollback(self) -> None:
+        text = (ROOT / "apply_udp443_forward.ps1").read_text(encoding="utf-8")
+        self.assertIn("SupportsShouldProcess", text)
+        self.assertIn("[switch]$DryRun", text)
+        self.assertIn("[switch]$Rollback", text)
+        self.assertIn("Resolve-SshKey", text)
+        self.assertIn("AUTOSTOPVPN_SSH_KEY", text)
+        self.assertIn("AUTOSTOPCRM_SSH_KEY", text)
+        self.assertIn("Invoke-GuardedNativeCommand", text)
+        self.assertIn("ConvertTo-RemoteCommand", text)
+        self.assertIn("normalizedScript", text)
+        self.assertIn("iptables-nft", text)
+        self.assertIn("-t nat -C PREROUTING", text)
+        self.assertIn("--dport", text)
+        self.assertIn("--to-destination", text)
+        self.assertIn("autostopvpn-udp443-forward.service", text)
+        self.assertIn("systemctl enable --now", text)
+        self.assertIn("systemctl disable --now", text)
+        self.assertIn("PartOf=docker.service", text)
+        self.assertIn("'$4 ~ suffix", text)
+        self.assertIn("Rollback UDP", text)
+        self.assertIn("key_resolved=true", text)
+        self.assertNotIn("PrivateKey", text)
+        self.assertNotIn("docker restart", text)
+        self.assertNotIn("systemctl restart", text)
+
+    def test_udp443_forward_helper_dry_run_does_not_require_ssh_execution(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell") or shutil.which("pwsh")
+        if powershell is None:
+            self.skipTest("PowerShell is not available")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            key_path = Path(temp_dir) / "dummy_key"
+            key_path.write_text("dummy", encoding="utf-8")
+            command = [
+                powershell,
+                "-NoProfile",
+                "-File",
+                str(ROOT / "apply_udp443_forward.ps1"),
+                "-DryRun",
+                "-HostName",
+                "127.0.0.1",
+                "-SshUser",
+                "root",
+                "-SshPort",
+                "22",
+                "-KeyPath",
+                str(key_path),
+                "-Container",
+                "amnezia-awg2",
+                "-DockerNetwork",
+                "amnezia-dns-net",
+                "-ListenPort",
+                "443",
+                "-TargetPort",
+                "47895",
+            ]
+            if Path(powershell).name.lower().startswith("powershell"):
+                command[2:2] = ["-ExecutionPolicy", "Bypass"]
+
+            completed = subprocess.run(
+                command,
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+            )
+
+        output = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, output)
+        self.assertIn("dry_run=True", output)
+        self.assertIn("mode=apply", output)
+        self.assertIn("Apply UDP 443 forward", output)
+        self.assertIn("key_resolved=true", output)
+
+    def test_udp443_forward_helper_rollback_dry_run_does_not_require_ssh_execution(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell") or shutil.which("pwsh")
+        if powershell is None:
+            self.skipTest("PowerShell is not available")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            key_path = Path(temp_dir) / "dummy_key"
+            key_path.write_text("dummy", encoding="utf-8")
+            command = [
+                powershell,
+                "-NoProfile",
+                "-File",
+                str(ROOT / "apply_udp443_forward.ps1"),
+                "-DryRun",
+                "-Rollback",
+                "-HostName",
+                "127.0.0.1",
+                "-SshUser",
+                "root",
+                "-SshPort",
+                "22",
+                "-KeyPath",
+                str(key_path),
+                "-Container",
+                "amnezia-awg2",
+                "-DockerNetwork",
+                "amnezia-dns-net",
+                "-ListenPort",
+                "443",
+                "-TargetPort",
+                "47895",
+            ]
+            if Path(powershell).name.lower().startswith("powershell"):
+                command[2:2] = ["-ExecutionPolicy", "Bypass"]
+
+            completed = subprocess.run(
+                command,
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+            )
+
+        output = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, output)
+        self.assertIn("dry_run=True", output)
+        self.assertIn("mode=rollback", output)
+        self.assertIn("Rollback UDP 443 forward", output)
 
     def test_mss_fallback_helper_has_safety_guards(self) -> None:
         text = (ROOT / "apply_telegram_mss_fallback.ps1").read_text(encoding="utf-8")

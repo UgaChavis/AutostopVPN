@@ -17,11 +17,15 @@
   "vpn_container": "amnezia-awg2",
   "network_interface": "eth0",
   "wireguard_mtu": 1280,
+  "vpn_public_udp_port": 47895,
+  "vpn_alternate_udp_ports": [
+    443
+  ],
   "bandwidth_limit_mbps": 1000,
   "notes": [
     "Панель доступна только локально через SSH-туннель.",
     "Основной домен CRM: crm.autostopcrm.ru.",
-    "Внешний VPN-порт: 47895/udp.",
+    "Внешние VPN endpoints: 47895/udp основной, 443/udp альтернативный для телефонов.",
     "Telegram baseline: awg0 MTU 1280, peer keepalive 25, TCP MSS 1240.",
     "Gateway может давать краткие RTT spikes без packet loss; перед изменениями снимай check_autostopvpn_network.ps1."
   ]

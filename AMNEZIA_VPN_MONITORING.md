@@ -6,13 +6,14 @@ The files in this repository are the local working copy. The production mirror l
 
 ## Scope
 
-This documents the monitoring layer and the controlled operational helpers around the existing Amnezia/WireGuard VPN. Normal monitoring is read-only; the Telegram keepalive, MTU, and MSS helpers are high-risk maintenance tools and must be run only from the documented workflow.
+This documents the monitoring layer and the controlled operational helpers around the existing Amnezia/WireGuard VPN. Normal monitoring is read-only; the UDP `443`, Telegram keepalive, MTU, and MSS helpers are high-risk maintenance tools and must be run only from the documented workflow.
 
 ## Current Server Layout
 
 - VPN runtime: Docker container `amnezia-awg2`
 - VPN implementation: AmneziaWG on interface `awg0`
-- Public listener: UDP `47895`
+- Stable public listener: UDP `47895`
+- Alternate mobile endpoint: UDP `443`, host DNAT to the existing `47895/udp` container listener
 - Host source path for the image build context: `/opt/amnezia/amnezia-awg2`
 - Live config inside the container: `/opt/amnezia/awg/awg0.conf`
 - Existing telemetry data dir: `/var/lib/amnezia-traffic`
@@ -24,6 +25,7 @@ Last verified from the server on 2026-05-29:
 
 - container `amnezia-awg2` is running and has been up for more than two weeks
 - UDP `47895` is listening on IPv4 and IPv6
+- UDP `443` is reserved as the alternate mobile endpoint and forwards to the existing `47895/udp` listener without restarting `amnezia-awg2`
 - `57` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
 - live `awg0` MTU and config MTU are both `1280`
 - Telegram-specific MSS clamp and generic `awg0` TCP MSS clamp are both active at `1240`
@@ -48,6 +50,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `open_amnezia_dashboard.cmd`
 - `check_autostopvpn_network.ps1`
 - `audit_autostopvpn.ps1`
+- `apply_udp443_forward.ps1`
 - `apply_telegram_keepalive_fix.ps1`
 - `apply_telegram_mtu_fix.ps1`
 - `apply_telegram_mss_fallback.ps1`
@@ -106,9 +109,10 @@ Recommended order:
    - `Telegram MSS counters` shows whether current Telegram MSS clamp rules are present and receiving traffic.
    - `Gateway jitter` shows provider gateway packet loss and RTT spread.
 
-4. For the current private VPN rollout, apply keepalive to all server peers with the helper below, then update or re-import every mobile profile with the same client-side standard. Keep existing keys, endpoint, DNS, and `AllowedIPs`, and set:
+4. For the current private VPN rollout, keep server MTU/MSS/keepalive stable and move phones to the alternate UDP `443` endpoint. Keep existing keys, DNS, and `AllowedIPs`, and set:
 
 ```ini
+Endpoint = 46.8.254.243:443
 MTU = 1280
 PersistentKeepalive = 25
 ```
@@ -119,9 +123,47 @@ PersistentKeepalive = 25
 If Telegram still improves but remains imperfect after the current `1280/1240` baseline, do not immediately lower only the server MTU. First confirm that the phone profile itself contains `MTU = 1280` and `PersistentKeepalive = 25`, and that the phone OS is not battery-throttling the VPN app or Telegram. The next controlled experiments are:
 
 - client-side `PersistentKeepalive = 15` on affected phones
-- an alternate UDP `443` endpoint that forwards to the existing VPN listener
 - an MTU ladder only if packet-size symptoms remain: `MTU=1200` with matching `MSS=1160`, then `MTU=1180` with `MSS=1140`
 - a Telegram-native MTProxy/SOCKS5 path if the problem is isolated to Telegram while general VPN traffic is healthy
+
+## UDP 443 Alternate Endpoint
+
+The UDP `443` endpoint is a no-drop transport path for mobile clients whose providers, Wi-Fi networks, or mobile NATs treat high UDP ports poorly. It leaves the original Docker-published `47895/udp` listener active, so existing clients remain connected until their phone profile is changed.
+
+The helper installs a host `iptables-nft` DNAT rule and a dedicated systemd oneshot service:
+
+- external `46.8.254.243:443/udp`
+- DNAT target: current `amnezia-awg2` container IP on `amnezia-dns-net`, port `47895/udp`
+- service: `autostopvpn-udp443-forward.service`
+- runtime boundary: no Docker restart, no container recreate, no peer changes
+
+Preview and apply:
+
+```powershell
+.\apply_udp443_forward.ps1 -DryRun
+.\apply_udp443_forward.ps1 -WhatIf
+.\apply_udp443_forward.ps1
+```
+
+Verify after applying:
+
+```powershell
+.\check_autostopvpn_network.ps1 -PingCount 30 -SampleSeconds 30
+```
+
+Expected signals:
+
+- `VPN listener` still shows `47895/udp`
+- `Alternate UDP endpoint` shows `udp_443_forward_present=true`
+- `udp_443_service_active=active` and `udp_443_service_enabled=enabled`
+- `Peer keepalive summary` still shows all peers with keepalive enabled
+- `Telegram mobile readiness` still shows live/config MTU `1280`
+
+Rollback removes only the UDP `443` forward and its service; it leaves `47895/udp`, MTU, MSS, and keepalive untouched:
+
+```powershell
+.\apply_udp443_forward.ps1 -Rollback
+```
 
 The local helper `apply_telegram_keepalive_fix.ps1` changes live WireGuard peer keepalive and edits the live container config. It backs up `awg0.conf` to `/root/autostopvpn-backups/awg0.conf.keepalive.bak.<timestamp>` before applying changes. Preview and keep the backup path:
 

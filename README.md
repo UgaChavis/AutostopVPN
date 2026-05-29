@@ -20,6 +20,7 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 Last verified from the server on 2026-05-29:
 
 - VPN container `amnezia-awg2` is running and listens on UDP `47895`
+- alternate mobile endpoint UDP `443` is forwarded on the host to the existing `47895/udp` listener without restarting the VPN container
 - monitoring services are app-managed and normally inactive until the desktop shell opens
 - peer config has `57` peers, all with server-side `PersistentKeepalive=25`
 - live `awg0` MTU and config MTU are `1280`
@@ -57,6 +58,7 @@ Last verified from the server on 2026-05-29:
 - [start_autostopvpn.ps1](start_autostopvpn.ps1): stable desktop entrypoint for the installed app
 - [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut with a generated shield icon
 - [remove_autostopvpn.ps1](remove_autostopvpn.ps1): remove the local install and desktop shortcut
+- [apply_udp443_forward.ps1](apply_udp443_forward.ps1): high-risk no-drop helper that adds or rolls back the host UDP `443` DNAT forward to the existing VPN listener
 - [apply_telegram_keepalive_fix.ps1](apply_telegram_keepalive_fix.ps1): high-risk keepalive helper for all mobile peers with `-DryRun`, `-WhatIf`, and rollback support
 - [apply_telegram_mtu_fix.ps1](apply_telegram_mtu_fix.ps1): high-risk MTU helper with `-DryRun` and `-WhatIf` support
 - [apply_telegram_mss_fallback.ps1](apply_telegram_mss_fallback.ps1): high-risk Telegram MSS fallback helper with `-DryRun`, `-WhatIf`, `-NoRestart`, and rollback support
@@ -112,12 +114,15 @@ Important `amnezia_server_info.json` fields:
 - `network_interface`: optional interface for bandwidth auto-detection
 - `bandwidth_limit_mbps`: optional provider or plan limit in Mbps
 - `wireguard_mtu`: optional target MTU for the VPN tunnel if you want the dashboard to compare it against the live probe
+- `vpn_public_udp_port`: current stable external VPN port
+- `vpn_alternate_udp_ports`: alternate external UDP ports for controlled client rollout
 - `notes`: dashboard notes shown to the operator
 
 If `bandwidth_limit_mbps` is empty, the collector falls back to the speed of the detected default network interface.
 If `wireguard_mtu` is set, the collector can compare it to the live `awg0` MTU and the probed path MTU.
 The current recommended value is `1280` after mobile Telegram media testing.
-The current mobile Telegram profile standard is `MTU=1280` and `PersistentKeepalive=25`.
+The current mobile Telegram profile standard is `Endpoint=46.8.254.243:443`, `MTU=1280`, and `PersistentKeepalive=25`.
+Existing profiles on `46.8.254.243:47895` continue to work; update phones to UDP `443` during the client rollout.
 Server-side peer keepalive is managed by `apply_telegram_keepalive_fix.ps1`; phone profiles should still be updated or re-imported with the same values for the best mobile NAT behavior.
 The post-keepalive server fallback is a generic TCP MSS clamp through `awg0` at `1240`, alongside the existing Telegram-specific MSS rules.
 The collector also caches endpoint geo labels and MTU probe results so normal refresh cycles stay light.
@@ -200,6 +205,7 @@ For a Telegram mobile baseline before changing phone profiles, use a longer read
 The monitor includes Telegram-focused read-only sections:
 
 - `Telegram mobile readiness`: live `awg0` MTU, config MTU, and the mobile client standard
+- `Alternate UDP endpoint`: UDP `443` forward presence, service state, DNAT counters, and confirmation that `47895/udp` remains published
 - `Peer keepalive summary`: keepalive counts and stale handshakes
 - `Telegram MSS counters`: current Telegram MSS clamp counters inside the container
 - `Gateway jitter`: parsed packet loss and RTT spread to the provider gateway
@@ -211,6 +217,23 @@ For a small server-side download sample, opt in explicitly:
 ```
 
 The monitor does not restart services, change peer configuration, or change MTU. It only reads service state, `wg show` counters, routes, pings, and the optional HTTP sample.
+
+The stable mobile profile target for phones is:
+
+```ini
+Endpoint = 46.8.254.243:443
+MTU = 1280
+PersistentKeepalive = 25
+```
+
+The UDP `443` helper changes only host NAT and a dedicated systemd oneshot service. It does not restart or recreate `amnezia-awg2`; `47895/udp` stays active for existing devices:
+
+```powershell
+.\apply_udp443_forward.ps1 -DryRun
+.\apply_udp443_forward.ps1 -WhatIf
+.\apply_udp443_forward.ps1
+.\apply_udp443_forward.ps1 -Rollback
+```
 
 The Telegram keepalive helper changes live WireGuard peer keepalive and edits the live container config. Preview it before applying, and keep the printed backup path for rollback:
 

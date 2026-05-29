@@ -12,7 +12,10 @@ param(
     [int]$ConnectTimeoutSeconds = 15,
     [int]$TelegramTargetMtu = 1280,
     [int]$TelegramTargetKeepalive = 25,
-    [int]$TelegramMss = 1240
+    [int]$TelegramMss = 1240,
+    [int]$VpnUdpPort = 47895,
+    [int]$AlternateUdpPort = 443,
+    [string]$DockerNetwork = "amnezia-dns-net"
 )
 
 $ErrorActionPreference = "Stop"
@@ -274,6 +277,8 @@ container="__CONTAINER__"
 iface="__INTERFACE__"
 target_mtu="__TARGET_MTU__"
 target_keepalive="__TARGET_KEEPALIVE__"
+public_ip="__PUBLIC_IP__"
+alternate_port="__ALTERNATE_PORT__"
 
 live_mtu="$(docker exec "$container" sh -c "cat /sys/class/net/$iface/mtu" 2>/dev/null || true)"
 config_mtu="$(docker exec "$container" sh -c "awk -F= '/^[[:space:]]*MTU[[:space:]]*=/{gsub(/[[:space:]]/,\"\",\$2); print \$2; exit}' /opt/amnezia/awg/awg0.conf" 2>/dev/null || true)"
@@ -285,16 +290,81 @@ echo "target_client_mtu=$target_mtu"
 echo "target_client_keepalive_seconds=$target_keepalive"
 echo "server_awg0_mtu=${live_mtu:-unknown} ok=$live_ok"
 echo "server_config_mtu=${config_mtu:-unknown} ok=$config_ok"
-echo "mobile_profile_required=MTU=$target_mtu PersistentKeepalive=$target_keepalive"
+echo "mobile_profile_endpoint=$public_ip:$alternate_port"
+echo "mobile_profile_required=Endpoint=$public_ip:$alternate_port MTU=$target_mtu PersistentKeepalive=$target_keepalive"
 '@
 
     $remoteScript = $remoteScript.
         Replace("__CONTAINER__", $script:Container).
         Replace("__INTERFACE__", $script:Interface).
         Replace("__TARGET_MTU__", "$script:TelegramTargetMtu").
-        Replace("__TARGET_KEEPALIVE__", "$script:TelegramTargetKeepalive")
+        Replace("__TARGET_KEEPALIVE__", "$script:TelegramTargetKeepalive").
+        Replace("__PUBLIC_IP__", "$script:HostName").
+        Replace("__ALTERNATE_PORT__", "$script:AlternateUdpPort")
 
     Write-CommandResult -Title "Telegram mobile readiness" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
+}
+
+function Write-AlternateUdpEndpoint {
+    $remoteScript = @'
+set -uo pipefail
+container="__CONTAINER__"
+network="__NETWORK__"
+target_port="__TARGET_PORT__"
+alternate_port="__ALTERNATE_PORT__"
+service_name="autostopvpn-udp443-forward.service"
+
+if command -v iptables-nft >/dev/null 2>&1; then
+  iptables_cmd="$(command -v iptables-nft)"
+elif command -v iptables >/dev/null 2>&1; then
+  iptables_cmd="$(command -v iptables)"
+else
+  iptables_cmd=""
+fi
+
+container_ip="$(docker inspect -f "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" "$container" 2>/dev/null | awk 'NF { print; exit }' || true)"
+if [ -z "$container_ip" ]; then
+  container_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{if .IPAddress}}{{.IPAddress}}{{"\n"}}{{end}}{{end}}' "$container" 2>/dev/null | awk 'NF { print; exit }' || true)"
+fi
+
+alternate_listener="$(ss -H -lunp 2>/dev/null | awk -v suffix=":$alternate_port" '$4 ~ suffix "$" { print }' || true)"
+target_listener="$(ss -H -lunp 2>/dev/null | awk -v suffix=":$target_port" '$4 ~ suffix "$" { print }' || true)"
+published_ports="$(docker ps --filter name="$container" --format '{{.Ports}}' 2>/dev/null || true)"
+target_published="$(printf '%s\n' "$published_ports" | grep -F "$target_port/udp" || true)"
+
+if [ -n "$iptables_cmd" ]; then
+  rules="$("$iptables_cmd" -t nat -S PREROUTING 2>/dev/null | grep -F -- "--dport $alternate_port" | grep -F -- "-j DNAT" | grep -F -- ":$target_port" || true)"
+  counters="$("$iptables_cmd" -t nat -vnL PREROUTING --line-numbers 2>/dev/null | awk -v port="dpt:$alternate_port" -v target=":$target_port" '$0 ~ port || $0 ~ target { print }' || true)"
+else
+  rules=""
+  counters=""
+fi
+
+service_active="$(systemctl is-active "$service_name" 2>/dev/null || true)"
+service_enabled="$(systemctl is-enabled "$service_name" 2>/dev/null || true)"
+
+echo "alternate_udp_port=$alternate_port"
+echo "target_udp_port=$target_port"
+echo "docker_network=$network"
+echo "container_ip=${container_ip:-unknown}"
+echo "iptables_backend=${iptables_cmd:-missing}"
+echo "udp_${alternate_port}_listener_conflict=$([ -n "$alternate_listener" ] && echo true || echo false)"
+echo "udp_${target_port}_listener_present=$([ -n "$target_listener" ] && echo true || echo false)"
+echo "udp_${target_port}_published=$([ -n "$target_published" ] && echo true || echo false)"
+echo "udp_${alternate_port}_forward_present=$([ -n "$rules" ] && echo true || echo false)"
+echo "udp_${alternate_port}_service_active=${service_active:-unknown}"
+echo "udp_${alternate_port}_service_enabled=${service_enabled:-unknown}"
+printf '%s\n' "$rules" | awk 'NF { print "dnat_rule=" $0 }'
+printf '%s\n' "$counters" | awk 'NF { print "dnat_counter=" $0 }'
+'@
+
+    $remoteScript = $remoteScript.
+        Replace("__CONTAINER__", $script:Container).
+        Replace("__NETWORK__", $script:DockerNetwork).
+        Replace("__TARGET_PORT__", "$script:VpnUdpPort").
+        Replace("__ALTERNATE_PORT__", "$script:AlternateUdpPort")
+
+    Write-CommandResult -Title "Alternate UDP endpoint" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
 }
 
 function Write-TelegramMssCounters {
@@ -460,14 +530,18 @@ $script:DownloadTimeoutSeconds = $DownloadTimeoutSeconds
 $script:TelegramTargetMtu = $TelegramTargetMtu
 $script:TelegramTargetKeepalive = $TelegramTargetKeepalive
 $script:TelegramMss = $TelegramMss
+$script:VpnUdpPort = $VpnUdpPort
+$script:AlternateUdpPort = $AlternateUdpPort
+$script:DockerNetwork = $DockerNetwork
 
 Write-Host "AutostopVPN read-only network check"
 Write-Host "target=${SshUser}@${HostName}:$SshPort container=$Container interface=$Interface key=$script:ResolvedKeyPath"
-Write-Host "no_restart=true no_peer_changes=true no_mtu_changes=true no_iptables_changes=true"
+Write-Host "no_restart=true no_peer_changes=true no_mtu_changes=true no_iptables_changes=true alternate_udp_port=$AlternateUdpPort target_udp_port=$VpnUdpPort"
 
 Write-CommandResult -Title "Server clock" -Result (Invoke-ReadOnlySsh -RemoteCommand "date -Is" -AllowFailure)
 Write-CommandResult -Title "Service state" -Result (Invoke-ReadOnlySsh -RemoteCommand "systemctl is-active amnezia-dashboard.service amnezia-traffic-collector.timer amnezia-traffic-collector.service" -AllowFailure)
-Write-CommandResult -Title "VPN listener" -Result (Invoke-ReadOnlySsh -RemoteCommand "docker ps --filter name=$Container --format '{{.Names}} {{.Status}} {{.Ports}}'; ss -lunp | grep 47895 || true" -AllowFailure)
+Write-CommandResult -Title "VPN listener" -Result (Invoke-ReadOnlySsh -RemoteCommand "docker ps --filter name=$Container --format '{{.Names}} {{.Status}} {{.Ports}}'; ss -lunp | grep $VpnUdpPort || true" -AllowFailure)
+Write-AlternateUdpEndpoint
 $routeResult = Invoke-ReadOnlySsh -RemoteCommand "ip route get 1.1.1.1" -AllowFailure
 Write-CommandResult -Title "Route to internet" -Result $routeResult
 $routeText = ($routeResult.Output | Out-String)
