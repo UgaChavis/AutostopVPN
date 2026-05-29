@@ -6,6 +6,27 @@ The production copy of the same files is mirrored into the main `AutostopCRM` re
 
 For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). For access notes and external documentation, read [ACCESS_AND_DOCS.md](ACCESS_AND_DOCS.md).
 
+## Documentation Map
+
+- [README.md](README.md): project entrypoint and common commands
+- [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md): compact maintainer map, active files, runtime flow, and verification targets
+- [AMNEZIA_VPN_MONITORING.md](AMNEZIA_VPN_MONITORING.md): production runbook, live VPN health checks, Telegram tuning, deployment, and rollback
+- [LOCAL_INSTALL.md](LOCAL_INSTALL.md): Windows desktop installation and launcher notes
+- [MAINTENANCE.md](MAINTENANCE.md): cleanup rules, documentation classification, and regression checklist
+- [ACCESS_AND_DOCS.md](ACCESS_AND_DOCS.md): where to find external access notes without committing secrets
+
+## Current Production Baseline
+
+Last verified from the server on 2026-05-29:
+
+- VPN container `amnezia-awg2` is running and listens on UDP `47895`
+- monitoring services are app-managed and normally inactive until the desktop shell opens
+- peer config has `57` peers, all with server-side `PersistentKeepalive=25`
+- live `awg0` MTU and config MTU are `1280`
+- Telegram-specific TCP MSS and generic `awg0` TCP MSS are clamped to `1240`
+- current channel utilization is well below the 1 Gbps configured limit
+- recurring provider-gateway jitter spikes can appear without packet loss; collect `check_autostopvpn_network.ps1` output before changing runtime settings
+
 ## What This Project Does
 
 - collects WireGuard peer traffic from the live Amnezia container
@@ -170,7 +191,7 @@ During a provider outage, use the read-only monitor from the local workspace:
 .\check_autostopvpn_network.ps1 -PingCount 10 -SampleSeconds 15
 ```
 
-For a Telegram mobile baseline before changing pilot phones, use a longer read-only sample:
+For a Telegram mobile baseline before changing phone profiles, use a longer read-only sample:
 
 ```powershell
 .\check_autostopvpn_network.ps1 -PingCount 100 -SampleSeconds 30
@@ -178,7 +199,7 @@ For a Telegram mobile baseline before changing pilot phones, use a longer read-o
 
 The monitor includes Telegram-focused read-only sections:
 
-- `Telegram mobile readiness`: live `awg0` MTU, config MTU, and the pilot client standard
+- `Telegram mobile readiness`: live `awg0` MTU, config MTU, and the mobile client standard
 - `Peer keepalive summary`: keepalive counts and stale handshakes
 - `Telegram MSS counters`: current Telegram MSS clamp counters inside the container
 - `Gateway jitter`: parsed packet loss and RTT spread to the provider gateway

@@ -22,6 +22,7 @@
     "Панель доступна только локально через SSH-туннель.",
     "Основной домен CRM: crm.autostopcrm.ru.",
     "Внешний VPN-порт: 47895/udp.",
-    "Резервный старый сервер: 185.42.164.2."
+    "Telegram baseline: awg0 MTU 1280, peer keepalive 25, TCP MSS 1240.",
+    "Gateway может давать краткие RTT spikes без packet loss; перед изменениями снимай check_autostopvpn_network.ps1."
   ]
 }

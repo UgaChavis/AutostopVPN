@@ -240,7 +240,7 @@ $remoteScript = $remoteScript.
 
 $remoteCommand = ConvertTo-RemoteCommand -Script $remoteScript
 
-Write-Warning "This helper changes live container firewall rules and the container start script. Use only after the mobile pilot confirms MSS fallback is needed."
+Write-Warning "This helper changes live container firewall rules and the container start script. Use only after diagnostics confirm MSS fallback is needed."
 if ($RollbackBackupPath) {
     $mode = "rollback"
 } else {

@@ -6,7 +6,7 @@ The files in this repository are the local working copy. The production mirror l
 
 ## Scope
 
-This adds a low-risk monitoring layer around the existing Amnezia/WireGuard VPN without rebuilding the VPN container or changing its peer configuration.
+This documents the monitoring layer and the controlled operational helpers around the existing Amnezia/WireGuard VPN. Normal monitoring is read-only; the Telegram keepalive, MTU, and MSS helpers are high-risk maintenance tools and must be run only from the documented workflow.
 
 ## Current Server Layout
 
@@ -17,6 +17,19 @@ This adds a low-risk monitoring layer around the existing Amnezia/WireGuard VPN 
 - Live config inside the container: `/opt/amnezia/awg/awg0.conf`
 - Existing telemetry data dir: `/var/lib/amnezia-traffic`
 - Production application repo on server: `/opt/autostopcrm`
+
+## Current Health Baseline
+
+Last verified from the server on 2026-05-29:
+
+- container `amnezia-awg2` is running and has been up for more than two weeks
+- UDP `47895` is listening on IPv4 and IPv6
+- `57` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
+- live `awg0` MTU and config MTU are both `1280`
+- Telegram-specific MSS clamp and generic `awg0` TCP MSS clamp are both active at `1240`
+- `api.telegram.org`, `1.1.1.1`, and `8.8.8.8` show `0%` packet loss in the latest checks
+- server load, memory, bandwidth utilization, and collector warnings are normal
+- provider gateway RTT can spike above `100 ms` without packet loss; treat this as provider jitter evidence, not as a reason to restart the VPN container
 
 ## Why The VPN Container Is Not Updated
 
@@ -33,10 +46,14 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `amnezia_vpn_shell.py`
 - `open_amnezia_dashboard.ps1`
 - `open_amnezia_dashboard.cmd`
+- `check_autostopvpn_network.ps1`
+- `audit_autostopvpn.ps1`
 - `apply_telegram_keepalive_fix.ps1`
 - `apply_telegram_mtu_fix.ps1`
 - `apply_telegram_mss_fallback.ps1`
 - `tests/test_amnezia_traffic_collector.py`
+- `tests/test_amnezia_vpn_shell.py`
+- `tests/test_maintenance_artifacts.py`
 
 ## What The Collector Produces
 
@@ -98,6 +115,13 @@ PersistentKeepalive = 25
 
 5. Test Telegram on each phone after 15 minutes of idle time, media download, voice note playback, media upload, and Wi-Fi/LTE switching.
 6. Watch the rollout for 30-60 minutes first, then a normal workday. The pass condition is no case where Telegram only recovers after restarting the mobile app, no noticeable battery or heat complaints, and no normal browsing regression through the VPN.
+
+If Telegram still improves but remains imperfect after the current `1280/1240` baseline, do not immediately lower only the server MTU. First confirm that the phone profile itself contains `MTU = 1280` and `PersistentKeepalive = 25`, and that the phone OS is not battery-throttling the VPN app or Telegram. The next controlled experiments are:
+
+- client-side `PersistentKeepalive = 15` on affected phones
+- an alternate UDP `443` endpoint that forwards to the existing VPN listener
+- an MTU ladder only if packet-size symptoms remain: `MTU=1200` with matching `MSS=1160`, then `MTU=1180` with `MSS=1140`
+- a Telegram-native MTProxy/SOCKS5 path if the problem is isolated to Telegram while general VPN traffic is healthy
 
 The local helper `apply_telegram_keepalive_fix.ps1` changes live WireGuard peer keepalive and edits the live container config. It backs up `awg0.conf` to `/root/autostopvpn-backups/awg0.conf.keepalive.bak.<timestamp>` before applying changes. Preview and keep the backup path:
 

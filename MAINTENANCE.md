@@ -26,6 +26,17 @@ The audit records:
 - Keep private keys, passwords, access notes, runtime data, and generated logs out of Git.
 - Keep `README.md`, `CODEX_PROJECT_MAP.md`, `LOCAL_INSTALL.md`, `AMNEZIA_VPN_MONITORING.md`, and `ACCESS_AND_DOCS.md` aligned when behavior changes.
 
+## Documentation Classification
+
+- `README.md`: active entrypoint. Keep concise and link to deeper runbooks instead of duplicating every operational step.
+- `CODEX_PROJECT_MAP.md`: active maintainer map. Keep current file roles, runtime flow, and verification targets here.
+- `AMNEZIA_VPN_MONITORING.md`: active production runbook. Keep live health baseline, Telegram tuning, deployment, and rollback here.
+- `LOCAL_INSTALL.md`: active Windows install guide. Keep only desktop install, launch, diagnostics, and uninstall steps here.
+- `ACCESS_AND_DOCS.md`: active pointer to external access notes. Do not copy secrets or full external docs into this repo.
+- `MAINTENANCE.md`: active cleanup checklist. Keep deletion criteria and regression gates here.
+
+There are currently no tracked Markdown delete candidates in this VPN workspace. If a new document appears, classify it as active, generated, historical, duplicate, or delete candidate before keeping it.
+
 ## Safe Optimization Order
 
 1. Run the baseline audit and `python -m unittest discover -s tests -v`.

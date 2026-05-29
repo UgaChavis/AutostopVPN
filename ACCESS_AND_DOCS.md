@@ -29,6 +29,8 @@ Useful files in that folder:
 
 Preferred local SSH key paths:
 
+- `%USERPROFILE%\.ssh\autostopvpn_server_ed25519`
+- `%USERPROFILE%\.ssh\autostopcrm_server_ed25519`
 - `%USERPROFILE%\.ssh\codex_autostopcrm`
 - `%USERPROFILE%\.ssh\codex_autostopcrm_key`
 - `%USERPROFILE%\.ssh\codex_autostopvpn`

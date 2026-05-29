@@ -285,7 +285,7 @@ echo "target_client_mtu=$target_mtu"
 echo "target_client_keepalive_seconds=$target_keepalive"
 echo "server_awg0_mtu=${live_mtu:-unknown} ok=$live_ok"
 echo "server_config_mtu=${config_mtu:-unknown} ok=$config_ok"
-echo "pilot_profile_required=MTU=$target_mtu PersistentKeepalive=$target_keepalive"
+echo "mobile_profile_required=MTU=$target_mtu PersistentKeepalive=$target_keepalive"
 '@
 
     $remoteScript = $remoteScript.

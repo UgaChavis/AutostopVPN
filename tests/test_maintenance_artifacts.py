@@ -92,6 +92,8 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertIn("Gateway jitter", text)
         self.assertIn("no_iptables_changes=true", text)
         self.assertIn("PersistentKeepalive", text)
+        self.assertIn("mobile_profile_required", text)
+        self.assertNotIn("pilot_profile_required", text)
         self.assertNotIn("ip link set", text)
         self.assertNotIn("wg set", text)
         self.assertNotIn("docker restart", text)
@@ -239,6 +241,16 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertIn("dry_run=True", output)
         self.assertIn("mode=apply", output)
         self.assertIn("Apply Telegram keepalive 25", output)
+
+    def test_docs_classify_active_documents_and_avoid_stale_server_note(self) -> None:
+        maintenance = (ROOT / "MAINTENANCE.md").read_text(encoding="utf-8")
+        server_info = (ROOT / "amnezia_server_info.json").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Documentation Classification", maintenance)
+        self.assertIn("no tracked Markdown delete candidates", maintenance)
+        self.assertIn("Current Production Baseline", readme)
+        self.assertIn("Telegram baseline", server_info)
+        self.assertNotIn("185.42.164.2", server_info)
 
 
 if __name__ == "__main__":
