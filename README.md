@@ -17,14 +17,14 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 
 ## Current Production Baseline
 
-Last verified from the server on 2026-05-29:
+Last verified from the server on 2026-06-01:
 
 - VPN container `amnezia-awg2` is running and listens on UDP `47895`
 - alternate mobile endpoint UDP `443` is forwarded on the host to the existing `47895/udp` listener without restarting the VPN container
 - monitoring services are app-managed and normally inactive until the desktop shell opens
 - peer config has `57` peers, all with server-side `PersistentKeepalive=25`
 - live `awg0` MTU and config MTU are `1280`
-- Telegram-specific TCP MSS and generic `awg0` TCP MSS are clamped to `1240`
+- generic `awg0` TCP MSS is clamped to `1240`
 - current channel utilization is well below the 1 Gbps configured limit
 - recurring provider-gateway jitter spikes can appear without packet loss; collect `check_autostopvpn_network.ps1` output before changing runtime settings
 
@@ -124,7 +124,7 @@ The current recommended value is `1280` after mobile Telegram media testing.
 The current mobile Telegram profile standard is `Endpoint=46.8.254.243:443`, `MTU=1280`, and `PersistentKeepalive=25`.
 Existing profiles on `46.8.254.243:47895` continue to work; update phones to UDP `443` during the client rollout.
 Server-side peer keepalive is managed by `apply_telegram_keepalive_fix.ps1`; phone profiles should still be updated or re-imported with the same values for the best mobile NAT behavior.
-The post-keepalive server fallback is a generic TCP MSS clamp through `awg0` at `1240`, alongside the existing Telegram-specific MSS rules.
+The post-keepalive server fallback is a generic TCP MSS clamp through `awg0` at `1240`. The read-only monitor reports Telegram-specific rule counters separately; on the current baseline, the expected active fallback signal is `generic_awg0_mss_in=1` and `generic_awg0_mss_out=1`.
 The collector also caches endpoint geo labels and MTU probe results so normal refresh cycles stay light.
 
 ## Generated Data
@@ -207,7 +207,7 @@ The monitor includes Telegram-focused read-only sections:
 - `Telegram mobile readiness`: live `awg0` MTU, config MTU, and the mobile client standard
 - `Alternate UDP endpoint`: UDP `443` forward presence, service state, DNAT counters, and confirmation that `47895/udp` remains published
 - `Peer keepalive summary`: keepalive counts and stale handshakes
-- `Telegram MSS counters`: current Telegram MSS clamp counters inside the container
+- `Telegram MSS counters`: current Telegram-specific counters and generic `awg0` MSS fallback counters inside the container
 - `Gateway jitter`: parsed packet loss and RTT spread to the provider gateway
 
 For a small server-side download sample, opt in explicitly:

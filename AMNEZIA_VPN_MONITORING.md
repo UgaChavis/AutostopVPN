@@ -21,14 +21,14 @@ This documents the monitoring layer and the controlled operational helpers aroun
 
 ## Current Health Baseline
 
-Last verified from the server on 2026-05-29:
+Last verified from the server on 2026-06-01:
 
-- container `amnezia-awg2` is running and has been up for more than two weeks
+- container `amnezia-awg2` is running
 - UDP `47895` is listening on IPv4 and IPv6
 - UDP `443` is reserved as the alternate mobile endpoint and forwards to the existing `47895/udp` listener without restarting `amnezia-awg2`
 - `57` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
 - live `awg0` MTU and config MTU are both `1280`
-- Telegram-specific MSS clamp and generic `awg0` TCP MSS clamp are both active at `1240`
+- generic `awg0` TCP MSS clamp is active at `1240`
 - `api.telegram.org`, `1.1.1.1`, and `8.8.8.8` show `0%` packet loss in the latest checks
 - server load, memory, bandwidth utilization, and collector warnings are normal
 - provider gateway RTT can spike above `100 ms` without packet loss; treat this as provider jitter evidence, not as a reason to restart the VPN container
@@ -106,7 +106,7 @@ Recommended order:
 3. Confirm these baseline signals:
    - `Telegram mobile readiness` shows live `awg0` MTU and config MTU equal to `1280`.
    - `Peer keepalive summary` shows whether peers are running with keepalive off and whether handshakes go stale.
-   - `Telegram MSS counters` shows whether current Telegram MSS clamp rules are present and receiving traffic.
+   - `Telegram MSS counters` shows whether Telegram-specific counters are present and whether the generic `awg0` MSS fallback is active and receiving traffic.
    - `Gateway jitter` shows provider gateway packet loss and RTT spread.
 
 4. For the current private VPN rollout, keep server MTU/MSS/keepalive stable and move phones to the alternate UDP `443` endpoint. Keep existing keys, DNS, and `AllowedIPs`, and set:
@@ -190,7 +190,7 @@ The local helper `apply_telegram_mtu_fix.ps1` is intentionally treated as high r
 .\apply_telegram_mtu_fix.ps1 -WhatIf
 ```
 
-If the keepalive rollout does not improve Telegram, the next server-side fallback is a generic TCP MSS clamp through `awg0`, or a dedicated Telegram MTProxy/SOCKS5 path. The current post-keepalive fallback is the generic TCP MSS clamp at `1240`, alongside the existing Telegram-specific rules. The MSS helper changes live container firewall rules and the container start script, and backs up `/opt/amnezia/start.sh` to `/root/autostopvpn-backups/start.sh.mss.bak.<timestamp>` before applying changes. Preview it first and run it only during a low-traffic maintenance window:
+If the keepalive rollout does not improve Telegram, the next server-side fallback is a generic TCP MSS clamp through `awg0`, or a dedicated Telegram MTProxy/SOCKS5 path. The current post-keepalive fallback is the generic TCP MSS clamp at `1240`; in the read-only monitor this should appear as `generic_awg0_mss_in=1` and `generic_awg0_mss_out=1`, even when `telegram_mss_rules_count=0`. The MSS helper changes live container firewall rules and the container start script, and backs up `/opt/amnezia/start.sh` to `/root/autostopvpn-backups/start.sh.mss.bak.<timestamp>` before applying changes. Preview it first and run it only during a low-traffic maintenance window:
 
 ```powershell
 .\apply_telegram_mss_fallback.ps1 -DryRun -NoRestart

@@ -2,7 +2,7 @@
 
 This file is the project orientation sheet for Codex and maintainers.
 
-Last verified from the live server on 2026-05-29.
+Last verified from the live server on 2026-06-01.
 
 ## Canonical Locations
 
@@ -28,8 +28,8 @@ Last verified from the live server on 2026-05-29.
 - `apply_telegram_mtu_fix.ps1`: high-risk helper for live `awg0` MTU changes with `-DryRun` and `-WhatIf`
 - `apply_telegram_mss_fallback.ps1`: high-risk helper for post-keepalive generic TCP MSS fallback with `-DryRun`, `-WhatIf`, `-NoRestart`, and rollback support
 - `audit_autostopvpn.ps1`: read-only maintenance audit for status, size hotspots, stale markers, hard-coded paths, ignored artifacts, and tests
-- current Telegram fallback state is server keepalive on all peers, `awg0` MTU `1280`, Telegram-specific MSS `1240`, generic `awg0` TCP MSS `1240`, stable `47895/udp`, and alternate mobile endpoint `443/udp`
-- current provider observation: occasional gateway RTT spikes above `100 ms` with `0%` packet loss
+- current Telegram fallback state is server keepalive on all peers, `awg0` MTU `1280`, generic `awg0` TCP MSS `1240`, stable `47895/udp`, and alternate mobile endpoint `443/udp`
+- current provider observation: gateway RTT is stable with `0%` packet loss in the latest read-only sample; occasional RTT spikes above `100 ms` remain a known provider pattern
 - the shell app keeps the SSH tunnel hidden, starts server monitoring while the window is open, stops it on close, and uses a single desktop window
 - `start_autostopvpn.ps1`: stable desktop entrypoint
 - `install_autostopvpn.ps1`: local install and desktop shortcut creation
