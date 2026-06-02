@@ -358,8 +358,10 @@ class AmneziaVpnShellTests(unittest.TestCase):
             ssh_dir.mkdir()
             key_path = ssh_dir / "codex_autostopcrm_key"
             key_path.write_text("dummy", encoding="utf-8")
-            with patch.object(shell.Path, "home", return_value=home):
-                self.assertEqual(shell._resolve_key_path(), str(key_path))
+            env_overrides = {"AUTOSTOPVPN_SSH_KEY": "", "AUTOSTOPCRM_SSH_KEY": ""}
+            with patch.dict(os.environ, env_overrides, clear=False):
+                with patch.object(shell.Path, "home", return_value=home):
+                    self.assertEqual(shell._resolve_key_path(), str(key_path))
 
     def test_parse_args_manages_remote_monitoring_by_default(self) -> None:
         self.assertTrue(shell.parse_args([]).manage_remote_monitoring)
