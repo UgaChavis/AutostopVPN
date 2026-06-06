@@ -880,8 +880,12 @@ def render_dashboard(summary: Dict[str, object]) -> str:
     rows = []
     for peer in peers:
         handshake_sort = peer["handshake_age_seconds"] if peer["handshake_age_seconds"] is not None else 999999999
+        active_class = "active" if peer["is_active"] else "inactive"
+        active_label = "активен" if peer["is_active"] else "нет связи"
+        share_percent = max(0.0, min(float(peer.get("current_share_percent", 0.0) or 0.0), 100.0))
         rows.append(
             "<tr "
+            f'class="peer-row {active_class}" '
             f'data-sort-name="{esc(str(peer["name"]).lower())}" '
             f'data-sort-vpn_ip="{peer["vpn_ip_sort"]}" '
             f'data-sort-handshake_age_seconds="{handshake_sort}" '
@@ -893,14 +897,17 @@ def render_dashboard(summary: Dict[str, object]) -> str:
             f'data-sort-current_share_percent="{peer["current_share_percent"]}" '
             f'data-sort-today_bytes="{peer["today_bytes"]}" '
             f'data-sort-total_bytes="{peer["total_bytes"]}">'
-            f"<td>{esc(peer['name'])}</td>"
+            f"<td><span class='peer-name'>{esc(peer['name'])}</span></td>"
             f"<td>{esc(peer['vpn_ip'])}</td>"
             f"<td>{esc(peer['handshake_age'])}</td>"
-            f"<td>{'да' if peer['is_active'] else 'нет'}</td>"
+            f"<td><span class='status-dot {active_class}'></span>{active_label}</td>"
             f"<td>{esc(format_rate(peer['current_total_bps']))}</td>"
             f"<td>{esc(format_rate(peer['current_rx_bps']))}</td>"
             f"<td>{esc(format_rate(peer['current_tx_bps']))}</td>"
-            f"<td>{esc(format_percent(peer['current_share_percent']))}</td>"
+            "<td>"
+            f"<span class='share-cell'><span class='share-track'><span class='share-fill' style='width: {share_percent:.2f}%'></span></span>"
+            f"<span>{esc(format_percent(peer['current_share_percent']))}</span></span>"
+            "</td>"
             f"<td class='day-col'>{esc(format_rate(peer['daily_avg_total_bps']))}</td>"
             f"<td class='day-col'>{esc(format_bytes(peer['today_bytes']))}</td>"
             f"<td class='all-col'>{esc(format_bytes(peer['total_bytes']))}</td>"
@@ -965,24 +972,51 @@ def render_dashboard(summary: Dict[str, object]) -> str:
   <title>Панель Amnezia VPN</title>
   <style>
     :root {{
-      --bg: #f7f7f4;
-      --fg: #111;
-      --muted: #5f6258;
-      --line: #d8dbd1;
-      --ok: #175c2a;
-      --warn: #8a3d13;
-      --panel: #ffffff;
+      --bg: #0a0f14;
+      --panel: #111a22;
+      --panel-alt: #17232d;
+      --line: #293946;
+      --fg: #eef5f7;
+      --muted: #93a8b4;
+      --ok: #38d996;
+      --ok-soft: #102f24;
+      --cyan: #52b7ff;
+      --warn: #f2c46d;
+      --warn-soft: #2b2113;
+      --danger: #ff8a98;
+      --danger-soft: #2a151d;
+      --shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      padding: 20px;
       background: var(--bg);
       color: var(--fg);
-      font: 14px/1.45 Consolas, "Liberation Mono", Menlo, monospace;
+      font: 14px/1.45 "Segoe UI", Roboto, Arial, sans-serif;
     }}
-    h1, h2 {{ margin: 0 0 12px; font-size: 18px; }}
-    h2 {{ margin-top: 24px; font-size: 15px; }}
+    .shell {{
+      width: min(1760px, 100%);
+      margin: 0 auto;
+      padding: 18px;
+    }}
+    h1, h2 {{ margin: 0; }}
+    h1 {{ font-size: clamp(22px, 2.2vw, 32px); line-height: 1.08; }}
+    h2 {{ margin: 22px 0 10px; font-size: 16px; }}
+    .topbar {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 16px 18px;
+      background: var(--panel-alt);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }}
+    .top-meta {{
+      margin-top: 6px;
+      color: var(--muted);
+      font: 12px/1.4 Consolas, "Liberation Mono", Menlo, monospace;
+    }}
     .grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -991,22 +1025,39 @@ def render_dashboard(summary: Dict[str, object]) -> str:
     .panel {{
       background: var(--panel);
       border: 1px solid var(--line);
-      padding: 12px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }}
+    .panel strong {{
+      display: block;
+      margin-bottom: 8px;
+      color: var(--fg);
+      font-size: 13px;
+    }}
+    .server-info-panel {{
+      grid-column: 1 / -1;
+      column-count: 3;
+      column-gap: 28px;
+    }}
+    .server-info-panel strong {{
+      column-span: all;
     }}
     .status {{
       display: inline-block;
-      padding: 4px 8px;
+      padding: 6px 10px;
       border: 1px solid currentColor;
       font-weight: 700;
+      letter-spacing: 0.02em;
     }}
     .status.ok {{ color: var(--ok); }}
     .status.warn {{ color: var(--warn); }}
-    .status.danger {{ color: #8b1c1c; }}
+    .status.danger {{ color: var(--danger); }}
     .traffic-banner {{
-      margin: 14px 0 18px;
-      padding: 14px;
+      margin: 14px 0 14px;
+      padding: 18px;
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, #ffffff 0%, #f4f7ef 100%);
+      background: linear-gradient(135deg, #111a22 0%, #0f181f 58%, #10231d 100%);
+      box-shadow: var(--shadow);
     }}
     .traffic-banner-top {{
       display: flex;
@@ -1016,36 +1067,33 @@ def render_dashboard(summary: Dict[str, object]) -> str:
       flex-wrap: wrap;
     }}
     .traffic-title {{
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+      font-size: 12px;
+      letter-spacing: 0.04em;
       color: var(--muted);
     }}
     .traffic-value {{
-      font-size: 28px;
+      font: 700 clamp(30px, 5vw, 54px)/1 Consolas, "Liberation Mono", Menlo, monospace;
       font-weight: 700;
-      line-height: 1.1;
-      margin: 2px 0 4px;
+      margin: 6px 0;
     }}
     .traffic-subvalue {{
       color: var(--muted);
-      font-size: 12px;
+      font: 12px/1.4 Consolas, "Liberation Mono", Menlo, monospace;
     }}
     .traffic-state {{
       border: 1px solid currentColor;
-      padding: 4px 8px;
+      padding: 7px 10px;
       font-weight: 700;
-      text-transform: uppercase;
       white-space: nowrap;
     }}
     .traffic-state.ok {{ color: var(--ok); }}
     .traffic-state.warn {{ color: var(--warn); }}
-    .traffic-state.danger {{ color: #8b1c1c; }}
+    .traffic-state.danger {{ color: var(--danger); }}
     .traffic-state.muted {{ color: var(--muted); }}
     .traffic-meter {{
-      margin: 12px 0 8px;
+      margin: 16px 0 10px;
       height: 12px;
-      background: #e4e6de;
+      background: #0b141b;
       border: 1px solid var(--line);
       overflow: hidden;
     }}
@@ -1055,8 +1103,27 @@ def render_dashboard(summary: Dict[str, object]) -> str:
       background: var(--ok);
     }}
     .traffic-fill.warn {{ background: var(--warn); }}
-    .traffic-fill.danger {{ background: #8b1c1c; }}
-    .traffic-fill.muted {{ background: #a3a7a0; }}
+    .traffic-fill.danger {{ background: var(--danger); }}
+    .traffic-fill.muted {{ background: var(--muted); }}
+    .peer-toolbar {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 8px 0 12px;
+    }}
+    .peer-search {{
+      min-width: min(420px, 100%);
+      flex: 1;
+      border: 1px solid var(--line);
+      background: #0b141b;
+      color: var(--fg);
+      padding: 9px 11px;
+      font: inherit;
+      outline: none;
+    }}
+    .peer-search:focus {{ border-color: var(--cyan); }}
     table {{
       width: 100%;
       border-collapse: collapse;
@@ -1071,15 +1138,50 @@ def render_dashboard(summary: Dict[str, object]) -> str:
       white-space: nowrap;
     }}
     th {{
-      background: #f0f2eb;
+      background: var(--panel-alt);
       position: sticky;
       top: 0;
+      z-index: 1;
+    }}
+    tbody tr.active {{ background: #10251f; }}
+    tbody tr.inactive {{ color: var(--muted); }}
+    tbody tr:hover {{ background: #17232d; }}
+    .peer-name {{ font-weight: 700; color: var(--fg); }}
+    .status-dot {{
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin-right: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      vertical-align: 1px;
+    }}
+    .status-dot.active {{ background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }}
+    .status-dot.inactive {{ background: var(--muted); }}
+    .share-cell {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 116px;
+    }}
+    .share-track {{
+      display: inline-block;
+      width: 54px;
+      height: 6px;
+      background: #0b141b;
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }}
+    .share-fill {{
+      display: block;
+      height: 100%;
+      background: var(--cyan);
     }}
     .muted {{ color: var(--muted); }}
     ul {{ margin: 0; padding-left: 18px; }}
     .table-wrap {{ overflow-x: auto; }}
     .hint {{ margin-top: 6px; color: var(--muted); font-size: 12px; }}
-    a {{ color: inherit; }}
+    a {{ color: var(--cyan); }}
     .sort-btn {{
       border: 0;
       background: transparent;
@@ -1098,29 +1200,42 @@ def render_dashboard(summary: Dict[str, object]) -> str:
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
-      margin: 8px 0 12px;
     }}
     .view-btn {{
       border: 1px solid var(--line);
-      background: var(--panel);
+      background: #0b141b;
       color: inherit;
-      padding: 6px 10px;
+      padding: 8px 10px;
       font: inherit;
       cursor: pointer;
     }}
     .view-btn.active {{
-      border-color: var(--fg);
+      border-color: var(--cyan);
+      color: var(--fg);
       font-weight: 700;
     }}
+    .empty-row td {{ color: var(--muted); text-align: center; }}
     .is-hidden {{
       display: none;
+    }}
+    @media (max-width: 760px) {{
+      .shell {{ padding: 10px; }}
+      .topbar {{ align-items: flex-start; flex-direction: column; }}
+      .traffic-value {{ font-size: 34px; }}
+      .server-info-panel {{ column-count: 1; }}
+      th, td {{ padding: 7px 8px; }}
     }}
   </style>
 </head>
 <body>
-  <h1>Панель Amnezia VPN</h1>
-  <p class="muted">Обновлено: {updated_at} | Часовой пояс: {timezone} | Окно текущей скорости: {sample_window} сек. Основной интерфейс - Autostop VPN Shell.</p>
-  <p><span class="status {status_class}">{status_label}</span></p>
+<main class="shell">
+  <header class="topbar">
+    <div>
+      <h1>Панель Amnezia VPN</h1>
+      <div class="top-meta">Обновлено: {updated_at} | {timezone} | окно скорости: {sample_window} сек. | Autostop VPN Shell</div>
+    </div>
+    <span class="status {status_class}">{status_label}</span>
+  </header>
 
   <div class="traffic-banner">
     <div class="traffic-banner-top">
@@ -1179,7 +1294,7 @@ def render_dashboard(summary: Dict[str, object]) -> str:
       Весь период учёта: {accounting_range}
       <div class="hint">В таблице можно переключать режим просмотра по этим периодам.</div>
     </div>
-    <div class="panel">
+    <div class="panel server-info-panel">
       <strong>{server_info_title}</strong><br>
       Назначение: {server_role}<br>
       Провайдер: {provider_name}<br>
@@ -1208,10 +1323,12 @@ def render_dashboard(summary: Dict[str, object]) -> str:
   </div>
 
   <h2>Пиры</h2>
-  <p class="muted">Клик по заголовку сортирует список.</p>
-  <div class="view-switch">
-    <button type="button" class="view-btn" data-mode="day">Текущие сутки</button>
-    <button type="button" class="view-btn" data-mode="all">Весь период</button>
+  <div class="peer-toolbar">
+    <input id="peer-search" class="peer-search" type="search" placeholder="Поиск по имени, IP, статусу или локации">
+    <div class="view-switch">
+      <button type="button" class="view-btn" data-mode="day">Текущие сутки</button>
+      <button type="button" class="view-btn" data-mode="all">Весь период</button>
+    </div>
   </div>
   <p class="muted" id="table-period-note"></p>
   <div class="table-wrap">
@@ -1244,6 +1361,7 @@ def render_dashboard(summary: Dict[str, object]) -> str:
       if (!tbody) return;
       const buttons = Array.from(table.querySelectorAll(".sort-btn"));
       const modeButtons = Array.from(document.querySelectorAll(".view-btn"));
+      const searchInput = document.getElementById("peer-search");
       const periodNote = document.getElementById("table-period-note");
       const dayRange = {day_range_json};
       const accountingRange = {accounting_range_json};
@@ -1262,6 +1380,16 @@ def render_dashboard(summary: Dict[str, object]) -> str:
           return 0;
         }});
         rows.forEach((row) => tbody.appendChild(row));
+        applyPeerFilter();
+      }}
+
+      function applyPeerFilter() {{
+        const query = (searchInput && searchInput.value ? searchInput.value : "").trim().toLowerCase();
+        Array.from(tbody.querySelectorAll("tr")).forEach((row) => {{
+          if (row.classList.contains("empty-row")) return;
+          const text = row.textContent.toLowerCase();
+          row.style.display = !query || text.includes(query) ? "" : "none";
+        }});
       }}
 
       function applyMode(mode) {{
@@ -1295,10 +1423,14 @@ def render_dashboard(summary: Dict[str, object]) -> str:
       modeButtons.forEach((button) => {{
         button.addEventListener("click", () => applyMode(button.dataset.mode));
       }});
+      if (searchInput) {{
+        searchInput.addEventListener("input", applyPeerFilter);
+      }}
 
       applyMode("all");
     }})();
   </script>
+</main>
 </body>
 </html>
 """.format(
@@ -1362,7 +1494,7 @@ def render_dashboard(summary: Dict[str, object]) -> str:
         vpn_container=esc(server_info.get("vpn_container", "")),
         warning_html=warning_html,
         server_notes=server_notes,
-        rows="".join(rows) or "<tr><td colspan='11'>Пиры не найдены.</td></tr>",
+        rows="".join(rows) or "<tr class='empty-row'><td colspan='11'>Пиры не найдены.</td></tr>",
     )
 
 

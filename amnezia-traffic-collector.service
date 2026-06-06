@@ -13,6 +13,6 @@ Environment=AMNEZIA_TRAFFIC_TZ=Asia/Krasnoyarsk
 Environment=AMNEZIA_PING_TARGET=1.1.1.1
 Environment=AMNEZIA_ACTIVE_WINDOW_SECONDS=180
 Environment=AMNEZIA_PING_COUNT=3
-ExecStart=/usr/local/bin/amnezia_traffic_collector.py collect
+ExecStart=/usr/bin/python3 /usr/local/bin/amnezia_traffic_collector.py collect
 TimeoutStartSec=30
 Nice=10

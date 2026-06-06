@@ -26,6 +26,14 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertIn("audit_autostopvpn.ps1", readme)
         self.assertIn("MAINTENANCE.md", project_map)
 
+    def test_collector_service_does_not_depend_on_script_shebang(self) -> None:
+        text = (ROOT / "amnezia-traffic-collector.service").read_text(encoding="utf-8")
+        self.assertIn(
+            "ExecStart=/usr/bin/python3 /usr/local/bin/amnezia_traffic_collector.py collect",
+            text,
+        )
+        self.assertNotIn("ExecStart=/usr/local/bin/amnezia_traffic_collector.py collect", text)
+
     def test_mtu_helper_has_safety_guards_and_shared_key_resolution(self) -> None:
         text = (ROOT / "apply_telegram_mtu_fix.ps1").read_text(encoding="utf-8")
         self.assertIn("SupportsShouldProcess", text)

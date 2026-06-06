@@ -45,7 +45,7 @@ Last verified from the server on 2026-06-01:
 ## Repository Layout
 
 - [amnezia_traffic_collector.py](amnezia_traffic_collector.py): telemetry collector, report writer, and dashboard generator
-- [amnezia_vpn_shell.py](amnezia_vpn_shell.py): native Windows shell UI for the live VPN snapshot with the cyberpunk dashboard theme
+- [amnezia_vpn_shell.py](amnezia_vpn_shell.py): native Windows shell UI for the live VPN snapshot with the operations cockpit theme
 - [amnezia_dashboard_server.py](amnezia_dashboard_server.py): request-time dashboard server for fresh page loads
 - [amnezia_server_info.json](amnezia_server_info.json): server metadata and editable dashboard notes
 - [amnezia-traffic-collector.service](amnezia-traffic-collector.service): systemd unit for scheduled collection

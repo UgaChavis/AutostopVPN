@@ -150,7 +150,7 @@ class AmneziaVpnShellTests(unittest.TestCase):
     def test_format_sync_status_text_keeps_header_contract(self) -> None:
         self.assertEqual(
             shell._format_sync_status_text("2026-04-18T03:00:00+07:00", "5s", 1.0),
-            "ssh tunnel // live peer telemetry // matrix load • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
+            "ssh tunnel // live vpn telemetry // ops cockpit • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
         )
 
     def test_poll_refresh_results_dispatches_success_on_main_thread(self) -> None:
@@ -245,7 +245,7 @@ class AmneziaVpnShellTests(unittest.TestCase):
         self.assertEqual(app._schedule_refresh_calls, 1)
         self.assertEqual(
             app.updated_label.values[-1]["text"],
-            "ssh tunnel // live peer telemetry // matrix load • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
+            "ssh tunnel // live vpn telemetry // ops cockpit • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
         )
         self.assertEqual(app.connection_label.values[-1]["text"], "LINK UP")
 
@@ -282,7 +282,7 @@ class AmneziaVpnShellTests(unittest.TestCase):
 
         self.assertEqual(
             app.updated_label.values[-1]["text"],
-            "ssh tunnel // live peer telemetry // matrix load • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
+            "ssh tunnel // live vpn telemetry // ops cockpit • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
         )
 
     def test_update_metric_cards_shows_channel_utilization_as_large_value(self) -> None:
@@ -377,8 +377,9 @@ class AmneziaVpnShellTests(unittest.TestCase):
             shell._run_remote_monitoring_control("vpn.example", "root", "key", "start")
             shell._run_remote_monitoring_control("vpn.example", "root", "key", "stop")
 
-        self.assertIn("systemctl start amnezia-dashboard.service", calls[0])
+        self.assertIn("systemctl start --no-block amnezia-dashboard.service", calls[0])
         self.assertIn("systemctl start amnezia-traffic-collector.timer", calls[0])
+        self.assertIn("systemctl start --no-block amnezia-traffic-collector.service", calls[0])
         self.assertIn("systemctl stop amnezia-traffic-collector.timer", calls[1])
         self.assertIn("systemctl stop amnezia-dashboard.service", calls[1])
 

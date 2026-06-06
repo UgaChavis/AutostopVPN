@@ -16,7 +16,7 @@ Last verified from the live server on 2026-06-01.
 ## Main Files
 
 - `amnezia_traffic_collector.py`: collector, report builder, `collect`, `report`, `status`, `doctor`
-- `amnezia_vpn_shell.py`: native desktop shell that displays the live snapshot with the cyberpunk dashboard theme and faster refresh cadence
+- `amnezia_vpn_shell.py`: native desktop shell that displays the live snapshot with the operations cockpit theme and faster refresh cadence
 - `amnezia_dashboard_server.py`: request-time dashboard server for fresh page loads
 - collector tracks current channel utilization, daily average load, and daily peak bandwidth
 - the dashboard shows a top traffic banner with load, headroom, and risk state
