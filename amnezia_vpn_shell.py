@@ -75,9 +75,10 @@ FONT_UI = "Segoe UI"
 FONT_MONO = "Consolas"
 _REMOTE_MONITORING_START_SCRIPT = """
 set -e
-systemctl start --no-block amnezia-dashboard.service
+systemctl is-active --quiet amnezia-dashboard.service || systemctl start --no-block amnezia-dashboard.service
 systemctl start amnezia-traffic-collector.timer
-systemctl start --no-block amnezia-traffic-collector.service || true
+collector_state="$(systemctl show -p ActiveState --value amnezia-traffic-collector.service 2>/dev/null || true)"
+[ "$collector_state" = "active" ] || [ "$collector_state" = "activating" ] || systemctl start --no-block amnezia-traffic-collector.service || true
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     curl -fsS --max-time 2 http://127.0.0.1:18080/dashboard.json >/dev/null && exit 0
     sleep 0.5

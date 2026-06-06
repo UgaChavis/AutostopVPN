@@ -377,8 +377,10 @@ class AmneziaVpnShellTests(unittest.TestCase):
             shell._run_remote_monitoring_control("vpn.example", "root", "key", "start")
             shell._run_remote_monitoring_control("vpn.example", "root", "key", "stop")
 
+        self.assertIn("systemctl is-active --quiet amnezia-dashboard.service", calls[0])
         self.assertIn("systemctl start --no-block amnezia-dashboard.service", calls[0])
         self.assertIn("systemctl start amnezia-traffic-collector.timer", calls[0])
+        self.assertIn("collector_state", calls[0])
         self.assertIn("systemctl start --no-block amnezia-traffic-collector.service", calls[0])
         self.assertIn("systemctl stop amnezia-traffic-collector.timer", calls[1])
         self.assertIn("systemctl stop amnezia-dashboard.service", calls[1])
