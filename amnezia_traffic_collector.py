@@ -862,7 +862,7 @@ def build_warnings(summary: Dict[str, object]) -> List[str]:
     return warnings
 
 
-def render_dashboard(summary: Dict[str, object]) -> str:
+def _render_legacy_dashboard(summary: Dict[str, object]) -> str:
     peers = summary["peers"]
     warnings = summary["warnings"]
     vpn = summary["vpn"]
@@ -1496,6 +1496,270 @@ def render_dashboard(summary: Dict[str, object]) -> str:
         server_notes=server_notes,
         rows="".join(rows) or "<tr class='empty-row'><td colspan='11'>Пиры не найдены.</td></tr>",
     )
+
+
+def render_dashboard(summary: Dict[str, object]) -> str:
+    peers = summary.get("peers", [])
+    if not isinstance(peers, list):
+        peers = []
+    warnings = summary.get("warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
+    vpn = summary.get("vpn", {}) if isinstance(summary.get("vpn", {}), dict) else {}
+    server = summary.get("server", {}) if isinstance(summary.get("server", {}), dict) else {}
+    server_info = summary.get("server_info", {}) if isinstance(summary.get("server_info", {}), dict) else {}
+    periods = summary.get("periods", {}) if isinstance(summary.get("periods", {}), dict) else {}
+    container = summary.get("container", {}) if isinstance(summary.get("container", {}), dict) else {}
+    bandwidth = server.get("bandwidth", {}) if isinstance(server.get("bandwidth", {}), dict) else {}
+    daily = bandwidth.get("daily", {}) if isinstance(bandwidth.get("daily", {}), dict) else {}
+    ping = server.get("ping", {}) if isinstance(server.get("ping", {}), dict) else {}
+    loadavg = server.get("loadavg", {}) if isinstance(server.get("loadavg", {}), dict) else {}
+    memory = server.get("memory", {}) if isinstance(server.get("memory", {}), dict) else {}
+    disk = server.get("disk_root", {}) if isinstance(server.get("disk_root", {}), dict) else {}
+
+    def esc(value: object) -> str:
+        return html.escape(str(value if value is not None else ""))
+
+    def location_bucket(value: object) -> str:
+        label = str(value or "").strip()
+        if not label:
+            return "нет данных"
+        return label.split(",", 1)[0].strip() or label
+
+    def percent_of(value: float, total: float) -> float:
+        if total <= 0:
+            return 0.0
+        return max(0.0, min((value / total) * 100.0, 100.0))
+
+    def peer_rate(peer: Dict[str, object], key: str) -> float:
+        try:
+            return float(peer.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    current_total_bps = int(bandwidth.get("current_bytes_per_sec", vpn.get("current_total_bps", 0)) or 0)
+    current_rx_bps = int(vpn.get("current_rx_bps", 0) or 0)
+    current_tx_bps = int(vpn.get("current_tx_bps", 0) or 0)
+    capacity_bps = int(bandwidth.get("capacity_bytes_per_sec", 0) or 0)
+    utilization_value = bandwidth.get("utilization_percent")
+    utilization_float = float(utilization_value or 0.0) if utilization_value is not None else percent_of(current_total_bps, capacity_bps)
+    headroom_bps = int(bandwidth.get("headroom_bytes_per_sec", 0) or 0)
+    bandwidth_state = describe_bandwidth_state(
+        capacity_bps,
+        utilization_float if utilization_value is not None else None,
+        int(bandwidth.get("over_capacity_bytes_per_sec", 0) or 0),
+    )
+    bandwidth_bar_width = float(bandwidth_state["bar_width_percent"])
+    if capacity_bps > 0 and current_total_bps > 0:
+        bandwidth_bar_width = max(bandwidth_bar_width, 2.0)
+    bandwidth_bar_width = min(bandwidth_bar_width, 100.0)
+    day_period = periods.get("current_day", {}) if isinstance(periods.get("current_day", {}), dict) else {}
+    accounting_period = periods.get("accounting", {}) if isinstance(periods.get("accounting", {}), dict) else {}
+    day_range = f"{format_timestamp(day_period.get('started_at'))} -> {format_timestamp(day_period.get('ended_at'))}"
+    accounting_range = (
+        f"{format_timestamp(accounting_period.get('started_at'))} -> {format_timestamp(accounting_period.get('ended_at'))}"
+    )
+    total_peers = int(vpn.get("total_peers", len(peers)) or 0)
+    active_connections = int(vpn.get("active_connections", 0) or 0)
+    offline_connections = max(total_peers - active_connections, 0)
+    active_percent = (active_connections / total_peers * 100.0) if total_peers else 0.0
+    offline_percent = (offline_connections / total_peers * 100.0) if total_peers else 0.0
+    sample_window = vpn.get("sample_window_seconds") or 0
+    current_total_label = format_rate(current_total_bps)
+    current_rx_label = format_rate(current_rx_bps)
+    current_tx_label = format_rate(current_tx_bps)
+    bandwidth_limit_label = format_rate(capacity_bps) if capacity_bps else "н/д"
+    bandwidth_headroom_label = format_rate(headroom_bps) if capacity_bps else "н/д"
+    daily_average_bps = float(daily.get("average_current_total_bps", 0.0) or 0.0)
+    daily_peak_bps = float(daily.get("peak_current_total_bps", 0.0) or 0.0)
+    daily_average_label = format_rate(daily_average_bps)
+    daily_peak_label = format_rate(daily_peak_bps)
+    daily_peak_utilization_label = format_percent(daily.get("peak_utilization_percent"))
+    top_peer = max(
+        (peer for peer in peers if isinstance(peer, dict)),
+        key=lambda peer: peer_rate(peer, "current_total_bps"),
+        default={},
+    )
+    top_peer_name = str(top_peer.get("name", "—") or "—")
+    top_peer_location = str(top_peer.get("endpoint_location", "") or "")
+    top_peer_rate = format_rate(peer_rate(top_peer, "current_total_bps")) if top_peer else "—"
+    top_peer_share = format_percent(top_peer.get("current_share_percent")) if top_peer else "—"
+    location_options = sorted(
+        {
+            location_bucket(peer.get("endpoint_location", ""))
+            for peer in peers
+            if isinstance(peer, dict) and location_bucket(peer.get("endpoint_location", ""))
+        }
+    )
+    location_options_html = "".join(f'<option value="{esc(item)}">{esc(item)}</option>' for item in location_options)
+
+    def channel_row(title: str, value: str, ratio: float, tone: str) -> str:
+        return (
+            '<div class="channel-row">'
+            f"<span>{esc(title)}</span><strong>{esc(value)}</strong>"
+            f'<em>{ratio:.2f}%</em><b><i class="{tone}" style="width: {ratio:.2f}%"></i></b>'
+            "</div>"
+        )
+
+    channel_rows = "".join(
+        [
+            channel_row("Входящий", current_rx_label, percent_of(current_rx_bps, capacity_bps), "blue"),
+            channel_row("Исходящий", current_tx_label, percent_of(current_tx_bps, capacity_bps), "green"),
+            channel_row("Пик за сегодня", daily_peak_label, percent_of(daily_peak_bps, capacity_bps), "yellow"),
+            channel_row("Средний за сегодня", daily_average_label, percent_of(daily_average_bps, capacity_bps), "muted"),
+            channel_row("Лимит канала", bandwidth_limit_label, 100.0 if capacity_bps else 0.0, "muted"),
+            channel_row("Запас канала", bandwidth_headroom_label, percent_of(headroom_bps, capacity_bps), "green"),
+        ]
+    )
+
+    def peer_detail_payload(peer: Dict[str, object], active_label: str, location: str, channel: str) -> str:
+        payload = {
+            "name": peer.get("name", "—"),
+            "vpnIp": peer.get("vpn_ip", "—"),
+            "status": active_label,
+            "location": location,
+            "channel": channel,
+            "endpoint": peer.get("endpoint", "—"),
+            "handshake": peer.get("handshake_age") or format_age(peer.get("handshake_age_seconds")),
+            "rx": format_rate(peer_rate(peer, "current_rx_bps")),
+            "tx": format_rate(peer_rate(peer, "current_tx_bps")),
+            "total": format_rate(peer_rate(peer, "current_total_bps")),
+            "share": format_percent(peer.get("current_share_percent")),
+            "today": format_bytes(int(peer.get("today_bytes", 0) or 0)),
+            "all": format_bytes(int(peer.get("total_bytes", 0) or 0)),
+            "key": peer.get("public_key_short", "—"),
+        }
+        return esc(json.dumps(payload, ensure_ascii=False))
+
+    rows = []
+    for peer in peers:
+        if not isinstance(peer, dict):
+            continue
+        handshake_sort = peer.get("handshake_age_seconds") if peer.get("handshake_age_seconds") is not None else 999999999
+        active_class = "active" if peer.get("is_active") else "inactive"
+        active_label = "Онлайн" if peer.get("is_active") else "Оффлайн"
+        location = str(peer.get("endpoint_location", "") or "нет данных")
+        location_filter = location_bucket(location)
+        channel = str(vpn.get("interface", "") or "awg0")
+        share_percent = max(0.0, min(float(peer.get("current_share_percent", 0.0) or 0.0), 100.0))
+        detail_payload = peer_detail_payload(peer, active_label, location, channel)
+        rows.append(
+            "<tr "
+            f'class="peer-row {active_class}" '
+            f'data-active="{active_label}" '
+            f'data-location="{esc(location_filter)}" '
+            f'data-detail="{detail_payload}" '
+            f'data-sort-name="{esc(str(peer.get("name", "")).lower())}" '
+            f'data-sort-vpn_ip="{esc(peer.get("vpn_ip_sort", peer.get("vpn_ip", "")))}" '
+            f'data-sort-handshake_age_seconds="{esc(handshake_sort)}" '
+            f'data-sort-is_active="{1 if peer.get("is_active") else 0}" '
+            f'data-sort-current_total_bps="{esc(peer.get("current_total_bps", 0))}" '
+            f'data-sort-current_rx_bps="{esc(peer.get("current_rx_bps", 0))}" '
+            f'data-sort-current_tx_bps="{esc(peer.get("current_tx_bps", 0))}" '
+            f'data-sort-current_share_percent="{esc(peer.get("current_share_percent", 0))}" '
+            f'data-sort-today_bytes="{esc(peer.get("today_bytes", 0))}" '
+            f'data-sort-total_bytes="{esc(peer.get("total_bytes", 0))}">'
+            f'<td><span class="status-dot {active_class}"></span></td>'
+            f'<td><span class="peer-name">{esc(peer.get("name", ""))}</span></td>'
+            f'<td>{esc(peer.get("vpn_ip", ""))}</td>'
+            f"<td>{esc(location_filter)}</td>"
+            f"<td>{esc(channel)}</td>"
+            f'<td>{esc(peer.get("handshake_age") or format_age(peer.get("handshake_age_seconds")))}</td>'
+            f'<td>{esc(format_rate(peer_rate(peer, "current_rx_bps")))}</td>'
+            f'<td>{esc(format_rate(peer_rate(peer, "current_tx_bps")))}</td>'
+            f'<td>{esc(format_rate(peer_rate(peer, "current_total_bps")))}</td>'
+            "<td>"
+            f'<span class="share-cell"><span class="share-track"><span class="share-fill" style="width: {share_percent:.2f}%"></span></span>'
+            f'<span>{esc(format_percent(peer.get("current_share_percent")))}</span></span>'
+            "</td>"
+            f'<td class="day-metric">{esc(format_bytes(int(peer.get("today_bytes", 0) or 0)))}</td>'
+            f'<td class="all-metric">{esc(format_bytes(int(peer.get("total_bytes", 0) or 0)))}</td>'
+            "</tr>"
+        )
+    rows_html = "".join(rows) or '<tr class="empty-row"><td colspan="12">Пиры не найдены.</td></tr>'
+    warning_html = "".join(f"<li>{esc(item)}</li>" for item in warnings) or "<li>Предупреждений нет.</li>"
+    status_label = "Внимание" if warnings else "Норма"
+    container_status = translate_container_status(str(container.get("status", "")))
+    server_uptime = format_age(server.get("uptime_seconds"))
+    latency = f'{float(ping.get("latency_avg_ms")):.2f} мс' if ping.get("latency_avg_ms") is not None else "н/д"
+    packet_loss = format_percent(ping.get("packet_loss_percent"))
+    mem_label = f'{format_bytes(memory.get("used_bytes", 0))} / {format_percent(memory.get("used_percent"))}'
+    disk_label = f'{format_bytes(disk.get("used_bytes", 0))} / {format_percent(disk.get("used_percent"))}'
+    server_notes = "".join(f"<li>{esc(item)}</li>" for item in server_info.get("notes", [])) or "<li>Нет заметок.</li>"
+    top_event_items = [
+        f"Снимок обновлен: {format_timestamp(summary.get('updated_at'))}",
+        f"Контейнер: {container_status}",
+        f"Лидер трафика: {top_peer_name}",
+    ]
+    if warnings:
+        top_event_items.insert(0, f"Предупреждение: {warnings[0]}")
+    top_events_html = "".join(f"<li>{esc(item)}</li>" for item in top_event_items[:5])
+
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Панель Amnezia VPN</title>
+  <style>
+    :root {{ --bg:#070d13; --panel:#101b25; --panel-2:#132231; --line:#263544; --line-soft:#1b2a38; --fg:#dce8f4; --muted:#93a4b7; --ok:#32d06f; --ok-soft:#0f2d22; --blue:#2f82ff; --cyan:#4cc9f0; --warn:#f5c542; --danger:#ff5b55; --shadow:0 18px 46px rgba(0,0,0,.28); }}
+    * {{ box-sizing:border-box; }} html,body {{ width:100%; max-width:100%; overflow-x:hidden; }} body {{ margin:0; background:var(--bg); color:var(--fg); font:14px/1.42 "Segoe UI",Inter,Arial,sans-serif; }} button,input,select {{ font:inherit; }}
+    .shell {{ width:min(1760px,100%); max-width:100%; margin:0 auto; padding:8px 12px 12px; overflow:hidden; }} h1 {{ margin:0; font-size:22px; font-weight:500; }} h2 {{ margin:0; font-size:16px; font-weight:700; }}
+    .app-header {{ min-height:50px; display:grid; grid-template-columns:1fr auto; gap:16px; align-items:center; border-bottom:1px solid var(--line); }}
+    .top-status {{ display:flex; align-items:center; gap:28px; flex-wrap:wrap; color:var(--muted); }} .top-status strong {{ color:var(--fg); font-weight:600; }}
+    .dot {{ display:inline-block; width:9px; height:9px; margin-right:7px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 3px var(--ok-soft); }}
+    .icon-btn {{ width:32px; height:32px; border:1px solid var(--line); background:var(--panel); color:var(--fg); border-radius:4px; }}
+    .dashboard-grid {{ display:grid; grid-template-columns:minmax(350px,38%) 1fr; gap:8px; margin-top:8px; }}
+    .panel {{ min-width:0; background:linear-gradient(135deg,var(--panel) 0%,#0e1822 100%); border:1px solid var(--line); border-radius:6px; box-shadow:var(--shadow); }}
+    .channel-panel {{ padding:14px 16px; }} .panel-title {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }} .muted {{ color:var(--muted); }}
+    .channel-main {{ display:grid; grid-template-columns:1fr auto; align-items:end; gap:12px; margin:16px 0 8px; }} .channel-main strong {{ font:700 30px/1 Consolas,monospace; }} .channel-main em {{ font:700 25px/1 Consolas,monospace; color:var(--ok); font-style:normal; }}
+    .traffic-meter {{ height:12px; border:1px solid var(--line); background:#1d2b38; overflow:hidden; border-radius:3px; }} .traffic-fill {{ display:block; height:100%; background:var(--ok); }} .traffic-fill.warn {{ background:var(--warn); }} .traffic-fill.danger {{ background:var(--danger); }}
+    .channel-row {{ display:grid; grid-template-columns:1fr auto 64px 172px; gap:12px; align-items:center; padding:8px 0; border-top:1px solid var(--line-soft); }} .channel-row strong,.channel-row em {{ font:600 13px Consolas,monospace; font-style:normal; text-align:right; }} .channel-row b {{ height:8px; border:1px solid var(--line); background:#1b2a38; border-radius:3px; overflow:hidden; }} .channel-row i {{ display:block; height:100%; background:var(--ok); }} .channel-row i.blue {{ background:var(--blue); }} .channel-row i.yellow {{ background:var(--warn); }} .channel-row i.muted {{ background:#6f7f90; }}
+    .kpi-grid {{ display:grid; grid-template-columns:repeat(4,minmax(180px,1fr)); gap:8px; }} .kpi-card {{ min-height:222px; padding:14px 16px; }} .kpi-title {{ font-weight:600; margin-bottom:14px; }} .kpi-value {{ font:700 31px/1.05 Consolas,monospace; margin-bottom:6px; }} .kpi-sub {{ color:var(--muted); margin-bottom:22px; }} .kpi-line {{ display:flex; justify-content:space-between; gap:14px; padding:5px 0; color:var(--muted); }} .kpi-line span:first-child:before {{ content:""; display:inline-block; width:9px; height:9px; margin-right:8px; border-radius:50%; background:var(--ok); }} .kpi-line.warn span:first-child:before {{ background:var(--warn); }} .kpi-line.danger span:first-child:before {{ background:var(--danger); }}
+    .traffic-panel {{ margin-top:8px; padding:14px 16px; display:grid; grid-template-columns:1fr 260px; gap:18px; }} .chart-box {{ min-height:166px; border-top:1px solid var(--line-soft); border-bottom:1px solid var(--line-soft); padding:14px 0; }} .chart-row {{ display:grid; grid-template-columns:94px 1fr 96px; gap:12px; align-items:center; margin:14px 0; color:var(--muted); }} .chart-track {{ height:12px; background:#172534; border:1px solid var(--line); border-radius:3px; overflow:hidden; }} .chart-track i {{ display:block; height:100%; }} .chart-track .rx {{ background:var(--blue); }} .chart-track .tx {{ background:var(--ok); }} .chart-track .total {{ background:var(--cyan); }} .traffic-values dl {{ display:grid; grid-template-columns:1fr auto; gap:9px 14px; margin:10px 0 0; }} .traffic-values dt {{ color:var(--muted); }} .traffic-values dd {{ margin:0; font:600 13px Consolas,monospace; }}
+    .workspace-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 390px; gap:8px; margin-top:8px; }} .table-panel,.detail-panel {{ min-width:0; padding:12px; }} .peer-toolbar {{ display:grid; grid-template-columns:minmax(260px,1fr) 150px 150px 170px 96px auto; gap:8px; align-items:center; margin-bottom:10px; }} .peer-toolbar input,.peer-toolbar select,.peer-toolbar button {{ min-width:0; height:38px; border:1px solid var(--line); background:#0a131c; color:var(--fg); border-radius:4px; padding:0 10px; outline:none; }} .peer-count {{ color:var(--muted); text-align:right; white-space:nowrap; }}
+    .table-wrap {{ width:100%; max-width:100%; overflow:auto; max-height:406px; border:1px solid var(--line); }} table {{ width:100%; border-collapse:collapse; min-width:1120px; background:#0f1822; }} th,td {{ padding:8px 10px; border-bottom:1px solid var(--line-soft); white-space:nowrap; text-align:left; }} th {{ position:sticky; top:0; z-index:1; background:#0c141d; color:var(--muted); font-weight:600; }} tbody tr {{ cursor:pointer; }} tbody tr.active {{ background:rgba(20,74,57,.45); }} tbody tr.inactive {{ color:var(--muted); }} tbody tr.selected {{ background:#174a83; color:var(--fg); }} tbody tr:hover {{ background:#162434; }}
+    .peer-name {{ font-weight:700; color:var(--fg); }} .status-dot {{ display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--muted); }} .status-dot.active {{ background:var(--ok); box-shadow:0 0 0 3px var(--ok-soft); }} .status-dot.inactive {{ background:var(--danger); box-shadow:0 0 0 3px rgba(255,91,85,.12); }} .share-cell {{ display:inline-flex; gap:8px; align-items:center; min-width:116px; }} .share-track {{ width:54px; height:6px; background:#0a131c; border:1px solid var(--line); overflow:hidden; }} .share-fill {{ display:block; height:100%; background:var(--blue); }} .sort-btn {{ border:0; background:transparent; color:inherit; padding:0; cursor:pointer; }} .sort-btn:after {{ content:" <>"; color:#65778a; }} .sort-btn[data-order="asc"]:after {{ content:" ^"; }} .sort-btn[data-order="desc"]:after {{ content:" v"; }}
+    .detail-title {{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }} .detail-name {{ font:700 22px/1.1 Consolas,monospace; margin:6px 0; }} .detail-status {{ color:var(--ok); font-weight:700; margin-bottom:14px; }} .detail-grid {{ display:grid; grid-template-columns:112px 1fr; gap:7px 12px; }} .detail-grid dt {{ color:var(--muted); }} .detail-grid dd {{ margin:0; }} .event-list {{ margin:16px -12px 0; padding:14px 12px 0; border-top:1px solid var(--line); }} .event-list ul,.notes ul {{ margin:0; padding-left:18px; }} .notes {{ margin-top:8px; padding:12px; }} .is-hidden {{ display:none; }}
+    @media (max-width:1100px) {{ .dashboard-grid,.workspace-grid,.traffic-panel {{ grid-template-columns:1fr; }} .kpi-grid {{ grid-template-columns:repeat(2,1fr); }} .peer-toolbar {{ grid-template-columns:1fr 1fr; }} .peer-count {{ text-align:left; }} }}
+    @media (max-width:680px) {{ .shell {{ padding:8px; }} .app-header,.top-status {{ display:block; }} .top-status>* {{ display:inline-block; margin:6px 12px 0 0; }} .kpi-grid,.peer-toolbar {{ grid-template-columns:1fr; }} .channel-row {{ grid-template-columns:1fr auto; }} .channel-row em,.channel-row b {{ display:none; }} }}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header class="app-header"><h1>VPN Мониторинг</h1><div class="top-status"><span><span class="dot"></span>Система: <strong>{esc(status_label)}</strong></span><span><span class="dot"></span>Сервер VPN: <strong>Онлайн</strong></span><span>Время: <strong>{esc(format_timestamp(summary.get("updated_at")))}</strong></span><span>Аптайм: <strong>{esc(server_uptime)}</strong></span><span>Обновление: <strong>{esc(sample_window)} сек</strong></span><span>Источник: <strong>Autostop VPN Shell</strong></span><button class="icon-btn" type="button" onclick="location.reload()" title="Обновить">R</button></div></header>
+  <section class="dashboard-grid">
+    <article class="panel channel-panel"><div class="panel-title"><h2>Использование канала</h2><span class="muted">awg0</span></div><div class="muted">Основной канал: {esc(bandwidth.get("interface") or vpn.get("interface") or "awg0")} / autodetected</div><div class="channel-main"><strong>{esc(current_total_label)}</strong><em>{esc(format_percent(utilization_float))}</em></div><div class="traffic-meter"><span class="traffic-fill {esc(bandwidth_state["class"])}" style="width: {bandwidth_bar_width:.2f}%"></span></div>{channel_rows}<p class="muted">Источник: {esc(bandwidth.get("source") or "auto")}</p></article>
+    <div class="kpi-grid">
+      <article class="panel kpi-card"><div class="kpi-title">Пиры</div><div class="kpi-value">{esc(total_peers)}</div><div class="kpi-sub">Всего</div><div class="kpi-line"><span>Онлайн</span><strong>{esc(active_connections)} ({active_percent:.1f}%)</strong></div><div class="kpi-line danger"><span>Оффлайн</span><strong>{esc(offline_connections)} ({offline_percent:.1f}%)</strong></div><div class="kpi-line warn"><span>Предупр.</span><strong>{esc(len(warnings))}</strong></div></article>
+      <article class="panel kpi-card"><div class="kpi-title">VPN-сервер</div><div class="kpi-value">1</div><div class="kpi-sub">Всего</div><div class="kpi-line"><span>Онлайн</span><strong>1 (100%)</strong></div><div class="kpi-line warn"><span>Ping</span><strong>{esc(latency)}</strong></div><div class="kpi-line"><span>Потери</span><strong>{esc(packet_loss)}</strong></div></article>
+      <article class="panel kpi-card"><div class="kpi-title">Снимки конфигурации</div><div class="kpi-value">1</div><div class="kpi-sub">Текущий snapshot</div><div class="kpi-line"><span>Успешно</span><strong>1 (100%)</strong></div><div class="kpi-line danger"><span>С ошибками</span><strong>0 (0%)</strong></div><div class="kpi-line warn"><span>Устарели</span><strong>0 (0%)</strong></div></article>
+      <article class="panel kpi-card"><div class="kpi-title">Лидер трафика</div><div class="kpi-value">{esc(top_peer_name)}</div><div class="kpi-sub">{esc(location_bucket(top_peer_location))}</div><div class="kpi-line"><span>Поток</span><strong>{esc(top_peer_rate)}</strong></div><div class="kpi-line"><span>Доля</span><strong>{esc(top_peer_share)}</strong></div><div class="kpi-line"><span>Статус</span><strong>активен</strong></div></article>
+    </div>
+  </section>
+  <section class="panel traffic-panel traffic-banner"><div><div class="panel-title"><h2>Трафик (текущий снимок и суточные ориентиры)</h2><span class="muted">окно {esc(sample_window)} сек</span></div><div class="chart-box"><div class="chart-row"><span>Входящий</span><b class="chart-track"><i class="rx" style="width: {percent_of(current_rx_bps, max(current_total_bps, 1)):.2f}%"></i></b><strong>{esc(current_rx_label)}</strong></div><div class="chart-row"><span>Исходящий</span><b class="chart-track"><i class="tx" style="width: {percent_of(current_tx_bps, max(current_total_bps, 1)):.2f}%"></i></b><strong>{esc(current_tx_label)}</strong></div><div class="chart-row"><span>Всего</span><b class="chart-track"><i class="total" style="width: {percent_of(current_total_bps, max(daily_peak_bps, current_total_bps, 1)):.2f}%"></i></b><strong>{esc(current_total_label)}</strong></div></div></div><aside class="traffic-values"><h2>Текущие значения</h2><dl><dt>Входящий</dt><dd>{esc(current_rx_label)}</dd><dt>Исходящий</dt><dd>{esc(current_tx_label)}</dd><dt>Всего</dt><dd>{esc(current_total_label)}</dd><dt>Пиковая нагрузка сегодня</dt><dd>{esc(daily_peak_label)} / {esc(daily_peak_utilization_label)}</dd><dt>Средняя нагрузка сегодня</dt><dd>{esc(daily_average_label)}</dd><dt>Загрузка канала</dt><dd>{esc(format_percent(utilization_float))}</dd></dl></aside></section>
+  <section class="workspace-grid">
+    <article class="panel table-panel"><div class="peer-toolbar"><input id="peer-search" class="peer-search" type="search" placeholder="Поиск по имени, адресу, площадке..."><select id="status-filter"><option>Статус: Все</option><option>Статус: Онлайн</option><option>Статус: Оффлайн</option></select><select id="period-filter"><option value="day">Период: Сегодня</option><option value="all">Период: Весь</option></select><select id="location-filter"><option value="Все">Площадка: Все</option>{location_options_html}</select><button id="reset-filters" type="button">Сбросить</button><div class="peer-count" id="peer-count">Пиров: {esc(total_peers)}</div></div><div class="table-wrap"><table id="peers-table"><thead><tr><th>Статус</th><th><button class="sort-btn" data-key="name" data-type="text">Пир</button></th><th><button class="sort-btn" data-key="vpn_ip" data-type="text">Виртуальный IP</button></th><th>Площадка</th><th>Канал</th><th><button class="sort-btn" data-key="handshake_age_seconds" data-type="number">Время отклика</button></th><th><button class="sort-btn" data-key="current_rx_bps" data-type="number">Входящий</button></th><th><button class="sort-btn" data-key="current_tx_bps" data-type="number">Исходящий</button></th><th><button class="sort-btn" data-key="current_total_bps" data-type="number">Всего</button></th><th><button class="sort-btn" data-key="current_share_percent" data-type="number">Доля</button></th><th class="day-metric"><button class="sort-btn" data-key="today_bytes" data-type="number">Сегодня</button></th><th class="all-metric"><button class="sort-btn" data-key="total_bytes" data-type="number">Всего период</button></th></tr></thead><tbody>{rows_html}</tbody></table></div><p class="muted" id="period-note">Показан режим: текущие сутки ({esc(day_range)}).</p></article>
+    <aside class="panel detail-panel"><div class="detail-title"><h2>Детали пира</h2><span class="muted">select row</span></div><div class="detail-name" id="detail-name">{esc(top_peer_name)}</div><div class="detail-status" id="detail-status">Онлайн</div><dl class="detail-grid"><dt>Виртуальный IP</dt><dd id="detail-vpnIp">—</dd><dt>Площадка</dt><dd id="detail-location">—</dd><dt>Канал</dt><dd id="detail-channel">—</dd><dt>Endpoint</dt><dd id="detail-endpoint">—</dd><dt>Handshake</dt><dd id="detail-handshake">—</dd><dt>Входящий</dt><dd id="detail-rx">—</dd><dt>Исходящий</dt><dd id="detail-tx">—</dd><dt>Всего</dt><dd id="detail-total">—</dd><dt>Доля</dt><dd id="detail-share">—</dd><dt>Сегодня</dt><dd id="detail-today">—</dd><dt>Весь период</dt><dd id="detail-all">—</dd></dl><div class="event-list"><h2>Последние события</h2><ul id="detail-events">{top_events_html}</ul></div></aside>
+  </section>
+  <section class="panel notes"><strong>Сервер</strong><span class="muted"> load {esc(loadavg.get("1m", "н/д"))} / {esc(loadavg.get("5m", "н/д"))} / {esc(loadavg.get("15m", "н/д"))}; memory {esc(mem_label)}; disk {esc(disk_label)}; project {esc(server_info.get("project_path", ""))}</span><ul>{warning_html}{server_notes}</ul></section>
+</main>
+<script>
+(function() {{
+  const table=document.getElementById("peers-table"); if(!table) return;
+  const tbody=table.querySelector("tbody"); const rows=Array.from(tbody.querySelectorAll("tr.peer-row"));
+  const search=document.getElementById("peer-search"); const statusFilter=document.getElementById("status-filter"); const periodFilter=document.getElementById("period-filter"); const locationFilter=document.getElementById("location-filter"); const reset=document.getElementById("reset-filters"); const peerCount=document.getElementById("peer-count"); const periodNote=document.getElementById("period-note");
+  const dayRange={json.dumps(day_range, ensure_ascii=False)}; const accountingRange={json.dumps(accounting_range, ensure_ascii=False)};
+  function statusValue() {{ return (statusFilter ? statusFilter.value : "Статус: Все").replace("Статус: ",""); }}
+  function applyFilters() {{ const query=(search&&search.value?search.value:"").toLowerCase().trim(); const status=statusValue(); const location=locationFilter?locationFilter.value:"Все"; let visible=0; rows.forEach((row)=>{{ const show=(!query||row.textContent.toLowerCase().includes(query))&&(status==="Все"||row.dataset.active===status)&&(location==="Все"||row.dataset.location===location); row.style.display=show?"":"none"; if(show) visible+=1; }}); if(peerCount) peerCount.textContent="Показано: "+visible+" / {total_peers}"; }}
+  function applyPeriod() {{ const mode=periodFilter?periodFilter.value:"day"; document.querySelectorAll(".day-metric").forEach((node)=>node.classList.toggle("is-hidden",mode!=="day")); document.querySelectorAll(".all-metric").forEach((node)=>node.classList.toggle("is-hidden",mode!=="all")); if(periodNote) periodNote.textContent=mode==="day"?"Показан режим: текущие сутки ("+dayRange+").":"Показан режим: весь период учета ("+accountingRange+")."; }}
+  function selectRow(row) {{ rows.forEach((item)=>item.classList.remove("selected")); row.classList.add("selected"); let detail={{}}; try {{ detail=JSON.parse(row.dataset.detail||"{{}}"); }} catch(_err) {{}} ["name","status","vpnIp","location","channel","endpoint","handshake","rx","tx","total","share","today","all"].forEach((key)=>{{ const node=document.getElementById("detail-"+key); if(node) node.textContent=detail[key]||"—"; }}); const events=document.getElementById("detail-events"); if(events) {{ events.innerHTML=""; [detail.handshake+": состояние "+detail.status,"Трафик: "+detail.total+" / доля "+detail.share,"Площадка: "+detail.location,"Endpoint: "+detail.endpoint].forEach((text)=>{{ const li=document.createElement("li"); li.textContent=text; events.appendChild(li); }}); }} }}
+  table.querySelectorAll(".sort-btn").forEach((button)=>button.addEventListener("click",()=>{{ const key=button.dataset.key; const type=button.dataset.type; const order=button.dataset.order==="desc"?"asc":"desc"; table.querySelectorAll(".sort-btn").forEach((item)=>item.removeAttribute("data-order")); button.dataset.order=order; rows.sort((left,right)=>{{ let a=left.getAttribute("data-sort-"+key)||""; let b=right.getAttribute("data-sort-"+key)||""; if(type==="number") {{ a=Number(a); b=Number(b); }} if(a<b) return order==="asc"?-1:1; if(a>b) return order==="asc"?1:-1; return 0; }}); rows.forEach((row)=>tbody.appendChild(row)); applyFilters(); }}));
+  rows.forEach((row)=>row.addEventListener("click",()=>selectRow(row))); [search,statusFilter,locationFilter].forEach((node)=>node&&node.addEventListener("input",applyFilters)); if(periodFilter) periodFilter.addEventListener("change",applyPeriod); if(reset) reset.addEventListener("click",()=>{{ if(search) search.value=""; if(statusFilter) statusFilter.value="Статус: Все"; if(locationFilter) locationFilter.value="Все"; if(periodFilter) periodFilter.value="day"; applyPeriod(); applyFilters(); }}); applyPeriod(); applyFilters(); if(rows[0]) selectRow(rows[0]);
+}})();
+</script>
+</body>
+</html>"""
 
 
 def write_reports(totals: Dict[str, object], daily: Dict[str, object], summary: Dict[str, object]) -> None:
