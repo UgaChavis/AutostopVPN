@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Autostop VPN Monitor V2 Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell" aria-label="Autostop VPN Monitor V2 prototype">
+      <header class="topbar">
+        <section class="brand-block" aria-label="Состояние синхронизации">
+          <h1>VPN Мониторинг</h1>
+          <strong id="opsSummary" class="ops-summary">57 пиров • 24 активны • лидер 10.8.1.50 • потерь нет • данные 2с назад</strong>
+          <p id="syncLine">ssh tunnel // live vpn telemetry // ops cockpit • SYNC — | AGE 2с | STEP 1s</p>
+        </section>
+
+        <section class="status-strip" aria-label="Ключевые статусы">
+          <span class="status-pill good" title="Общий статус: зеленый, если потерь нет и snapshot свежее 10 секунд."><span></span>Система: Норма</span>
+          <span class="status-pill good" title="Контейнер VPN отвечает, dashboard service доступен."><span></span>VPN: Онлайн</span>
+          <span class="status-pill good" title="SSH tunnel до dashboard.json открыт и отвечает."><span></span>Tunnel OK</span>
+          <span class="status-pill good" title="Контрольные ping targets без потерь. Желтый порог: >2%, красный: >5%."><span></span>Потери 0%</span>
+          <span class="status-pill neutral" id="agePill" title="Свежесть snapshot. Желтый порог: старше 10 секунд.">AGE 2с</span>
+          <button id="refreshButton" type="button" title="Запросить свежий snapshot. Не меняет VPN и peer-конфигурацию.">
+            Обновить
+          </button>
+          <button id="closeButton" class="danger-button" type="button" title="Закрывает только окно мониторинга и SSH tunnel. Сам VPN продолжает работать.">
+            Закрыть мониторинг
+          </button>
+        </section>
+      </header>
+
+      <section class="kpi-row" aria-label="Главные показатели">
+        <article class="metric-card accent-good">
+          <span class="metric-title">Канал</span>
+          <strong id="kpiChannel">65.8 KiB/s</strong>
+          <small id="kpiChannelNote">0.05% / 1 Gbps • +4.1 KiB/s за 60с</small>
+        </article>
+        <article class="metric-card accent-blue">
+          <span class="metric-title">Пиры</span>
+          <strong id="kpiPeers">57</strong>
+          <small id="kpiPeersNote">онлайн 24 • без связи 2 • тихих 2</small>
+        </article>
+        <article class="metric-card accent-good">
+          <span class="metric-title">MTU</span>
+          <strong>1280 OK</strong>
+          <small>profile target 1280 • awg0 aligned</small>
+        </article>
+        <article class="metric-card accent-good">
+          <span class="metric-title">UDP 443</span>
+          <strong>active</strong>
+          <small>DNAT → 47895/udp • mobile ready</small>
+        </article>
+        <article class="metric-card accent-warn">
+          <span class="metric-title">Лидер</span>
+          <strong id="kpiLeader">10.8.1.50</strong>
+          <small id="kpiLeaderNote">13.42 KiB/s • 20.39%</small>
+        </article>
+      </section>
+
+      <section class="overview-grid" aria-label="Канал и живой трафик">
+        <aside class="channel-panel">
+          <h2>Использование канала</h2>
+          <p class="subtle">Основной канал: awg0 / eth0 autodetected</p>
+
+          <div class="channel-value">
+            <strong id="currentFlowLarge">65.8 KiB/s</strong>
+            <span id="utilizationLarge">0.05%</span>
+          </div>
+
+          <div class="capacity-meter" aria-label="Загрузка канала 0.05%">
+            <span class="capacity-fill" id="capacityFill"></span>
+            <span class="peak-marker" title="Дневной пик 12.5%"></span>
+          </div>
+
+          <dl class="stats-list">
+            <div><dt>Входящий</dt><dd class="rx" id="rxNow">40.63 KiB/s</dd></div>
+            <div><dt>Исходящий</dt><dd class="tx" id="txNow">25.21 KiB/s</dd></div>
+            <div><dt>Пик сегодня</dt><dd class="warn">14.90 MiB/s / 12.5%</dd></div>
+            <div><dt>Средний сегодня</dt><dd>1.27 MiB/s</dd></div>
+            <div><dt>Лимит</dt><dd>1 Gbps</dd></div>
+            <div><dt>Запас</dt><dd class="good">119.14 MiB/s</dd></div>
+          </dl>
+        </aside>
+
+        <section class="traffic-panel">
+          <div class="section-header">
+            <h2>Живой трафик: последние 90 секунд</h2>
+            <div class="chart-tools">
+              <span id="chartSummary">сейчас 65.8 KiB/s | пик 14.9 MiB/s | загрузка 0.05%</span>
+              <button id="scaleToggle" type="button" title="Реальный масштаб показывает загрузку относительно 1 Gbps. Детальный масштаб раскрывает малый текущий трафик.">
+                Масштаб: детальный
+              </button>
+            </div>
+          </div>
+
+          <div class="chart-and-stats">
+            <svg id="trafficChart" viewBox="0 0 860 180" role="img" aria-label="График RX и TX за последние 90 секунд">
+              <defs>
+                <linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0" stop-color="rgba(32, 223, 143, 0.18)" />
+                  <stop offset="1" stop-color="rgba(32, 223, 143, 0.02)" />
+                </linearGradient>
+              </defs>
+            </svg>
+
+            <dl class="live-stats" aria-label="Текущие значения">
+              <dt>RX</dt><dd class="rx" id="statRx">40.63 KiB/s</dd>
+              <dt>TX</dt><dd class="tx" id="statTx">25.21 KiB/s</dd>
+              <dt>Всего</dt><dd class="cyan" id="statTotal">65.84 KiB/s</dd>
+              <dt>Пик</dt><dd class="warn">14.90 MiB/s</dd>
+              <dt>Средняя</dt><dd>1.27 MiB/s</dd>
+              <dt>Загрузка</dt><dd class="good" id="statUtil">0.05%</dd>
+            </dl>
+          </div>
+        </section>
+      </section>
+
+      <section class="quick-filters" aria-label="Быстрые диагностические фильтры">
+        <button class="quick-filter active" data-filter="all" type="button">Все пиры</button>
+        <button class="quick-filter" data-filter="top" type="button">Топ трафика</button>
+        <button class="quick-filter" data-filter="offline" type="button">Без связи</button>
+        <button class="quick-filter" data-filter="stale" type="button">Тихие >10м</button>
+        <button class="quick-filter" data-filter="mtu" type="button">MTU issue</button>
+        <button class="quick-filter" data-filter="active" type="button">Активные сейчас</button>
+      </section>
+
+      <section class="filter-bar" aria-label="Фильтры пиров">
+        <label class="search-box">
+          <span class="sr-only">Поиск по пиру, IP, endpoint или локации</span>
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Поиск по VPN IP, endpoint, локации или ключу" />
+        </label>
+
+        <label>Статус:
+          <select id="statusFilter">
+            <option>Все</option>
+            <option selected>Онлайн</option>
+            <option>Нет связи</option>
+          </select>
+        </label>
+        <label>Период:
+          <select id="periodFilter">
+            <option selected>Сегодня</option>
+            <option>Накоплено</option>
+          </select>
+        </label>
+        <label>Локация:
+          <select id="locationFilter">
+            <option selected>Все</option>
+          </select>
+        </label>
+        <button id="resetFilters" type="button">Сбросить</button>
+        <span id="visibleCount" class="filter-count">Показано 32/57 | активных 31</span>
+      </section>
+
+      <section class="main-grid">
+        <section class="table-panel" aria-label="Пиры VPN">
+          <div class="section-header">
+            <h2>Пиры</h2>
+            <span id="tableCount">32 peers</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Статус</th>
+                  <th>VPN IP</th>
+                  <th>Диагноз</th>
+                  <th>Локация endpoint</th>
+                  <th>Последняя связь</th>
+                  <th>RX</th>
+                  <th>TX</th>
+                  <th>Поток</th>
+                  <th>Доля</th>
+                  <th>Сегодня</th>
+                  <th>Накоплено</th>
+                </tr>
+              </thead>
+              <tbody id="peerRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="detail-panel" aria-label="Выбранный пир">
+          <h2>Выбранный пир</h2>
+          <strong id="detailIp">10.8.1.50</strong>
+          <p id="detailSubtitle" class="subtle">188.235.248.27 | 188.235.248.27:39117</p>
+          <div id="detailNote" class="detail-note">Активный пир, трафик идет сейчас</div>
+
+          <dl class="detail-list">
+            <div><dt>Endpoint</dt><dd id="detailEndpoint">46.8.254.243:443</dd></div>
+            <div><dt>Статус</dt><dd id="detailStatus" class="good">активен</dd></div>
+            <div><dt>Последняя связь</dt><dd id="detailHandshake">1м 56с</dd></div>
+            <div><dt>Ping</dt><dd id="detailPing" class="good">42 ms</dd></div>
+            <div><dt>Loss</dt><dd id="detailLoss" class="good">0%</dd></div>
+            <div><dt>Поток</dt><dd id="detailFlow" class="cyan">13.42 KiB/s</dd></div>
+            <div><dt>Доля</dt><dd id="detailShare" class="warn">20.39%</dd></div>
+            <div><dt>MTU</dt><dd id="detailMtu" class="good">1280 OK</dd></div>
+            <div><dt>1 час</dt><dd id="detailHour">28.4 MiB</dd></div>
+            <div><dt>Сегодня</dt><dd id="detailToday">602.74 MiB</dd></div>
+            <div><dt>Накоплено</dt><dd id="detailTotal">82.97 GiB</dd></div>
+          </dl>
+
+          <div class="detail-actions">
+            <button id="copyEndpoint" type="button">Копировать endpoint</button>
+            <button id="copyProfile" type="button">Профиль телефона</button>
+          </div>
+
+          <section class="event-box" aria-label="Последние события выбранного пира">
+            <h3>Последние события</h3>
+            <ul id="eventList"></ul>
+          </section>
+        </aside>
+      </section>
+
+      <footer class="footer">
+        <span id="trustState">Источник: dashboard.json • обновлено 2с назад • данные свежие • сервер доступен</span>
+        <span id="linkState">LINK UP</span>
+      </footer>
+    </main>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -36,7 +36,30 @@ class _DummyLabel:
         self.values.append(kwargs)
 
 
+class _DummyHttpResponse:
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self) -> bytes:
+        return self.payload
+
+
 class AmneziaVpnShellTests(unittest.TestCase):
+    def test_fetch_summary_retries_transient_connection_reset(self) -> None:
+        response = _DummyHttpResponse(b'{"container": {"status": "running"}}')
+        with patch.object(shell, "FETCH_RETRY_DELAYS_SECONDS", (0.0,)):
+            with patch.object(shell, "urlopen", side_effect=[ConnectionResetError("reset"), response]) as urlopen_mock:
+                summary = shell.fetch_summary("http://127.0.0.1:18765/dashboard.json")
+
+        self.assertEqual(summary["container"]["status"], "running")
+        self.assertEqual(urlopen_mock.call_count, 2)
+
     def test_build_view_model_orders_peers_and_formats_channel_state(self) -> None:
         summary = {
             "updated_at": "2026-04-17T12:30:00+00:00",
@@ -157,6 +180,39 @@ class AmneziaVpnShellTests(unittest.TestCase):
             shell._format_sync_status_text("2026-04-18T03:00:00+07:00", "5s", 1.0),
             "ssh tunnel // live vpn telemetry // ops cockpit • SYNC 2026-04-18T03:00:00+07:00 | AGE 5s | STEP 1s",
         )
+
+    def test_peer_diagnostic_state_classifies_operator_scenarios(self) -> None:
+        base = {
+            "active_value": True,
+            "current_bps": 1024,
+            "share_value": 2.0,
+            "handshake_age_seconds": 5,
+            "recommended_mtu": "1280 B",
+            "interface_mtu": "1280 B",
+        }
+
+        self.assertEqual(shell._peer_diagnostic_state(base)["key"], "ok")
+        self.assertEqual(shell._peer_diagnostic_state({**base, "share_value": 21.0})["key"], "top")
+        self.assertEqual(shell._peer_diagnostic_state({**base, "handshake_age_seconds": 601})["key"], "stale")
+        self.assertEqual(shell._peer_diagnostic_state({**base, "interface_mtu": "1420 B"})["key"], "mtu")
+        self.assertEqual(shell._peer_diagnostic_state({**base, "active_value": False})["key"], "offline")
+
+    def test_peer_matches_quick_filter_uses_diagnostic_state(self) -> None:
+        top_peer = {
+            "active_value": True,
+            "current_bps": 2 * 1024 * 1024,
+            "share_value": 22.0,
+            "handshake_age_seconds": 3,
+            "recommended_mtu": "1280 B",
+            "interface_mtu": "1280 B",
+        }
+        offline_peer = {**top_peer, "active_value": False, "current_bps": 0, "share_value": 0.0}
+
+        self.assertTrue(shell._peer_matches_quick_filter(top_peer, "top"))
+        self.assertTrue(shell._peer_matches_quick_filter(top_peer, "active"))
+        self.assertFalse(shell._peer_matches_quick_filter(top_peer, "offline"))
+        self.assertTrue(shell._peer_matches_quick_filter(offline_peer, "offline"))
+        self.assertTrue(shell._peer_matches_quick_filter(offline_peer, "issues"))
 
     def test_poll_refresh_results_dispatches_success_on_main_thread(self) -> None:
         app = shell.ShellApp.__new__(shell.ShellApp)

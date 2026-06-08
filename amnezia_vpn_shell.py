@@ -15,8 +15,10 @@ import subprocess
 import socket
 import traceback
 from datetime import datetime, timezone
+from http.client import RemoteDisconnected
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import ctypes
 
@@ -43,8 +45,9 @@ DEFAULT_REMOTE_PORT = 18080
 DEFAULT_HOST = "46.8.254.243"
 DEFAULT_SSH_USER = "root"
 REQUEST_TIMEOUT_SECONDS = 3.0
+FETCH_RETRY_DELAYS_SECONDS = (0.2, 0.5)
 _SINGLE_INSTANCE_MUTEX_NAME = "AutostopVPNShell"
-_MAIN_WINDOW_TITLE_PREFIX = "Autostop VPN Shell"
+_MAIN_WINDOW_TITLE_PREFIX = "Autostop VPN"
 _ENDPOINT_LOCATION_CACHE: Dict[str, str] = {}
 _SSH_CONNECT_TIMEOUT_SECONDS = 5
 _SSH_TUNNEL_WAIT_SECONDS = 10.0
@@ -151,6 +154,12 @@ def _format_latency(value: object) -> str:
     return f"{_coerce_float(value):.2f} ms"
 
 
+def _format_loss(value: object) -> str:
+    if value is None:
+        return "н/д"
+    return collector.format_percent(_coerce_float(value))
+
+
 def _format_storage(used_bytes: object, total_bytes: object, used_percent: object) -> str:
     used_label = collector.format_bytes(_coerce_int(used_bytes))
     total_label = collector.format_bytes(_coerce_int(total_bytes))
@@ -165,11 +174,17 @@ def _format_percent_pair(part: int, total: int) -> str:
 
 
 def _format_snapshot_age(updated_at: object) -> str:
+    age_seconds = _snapshot_age_seconds(updated_at)
+    if age_seconds is None:
+        return "н/д"
+    return collector.format_age(age_seconds)
+
+
+def _snapshot_age_seconds(updated_at: object) -> Optional[int]:
     parsed = collector.parse_iso_datetime(str(updated_at)) if updated_at else None
     if parsed is None:
-        return "н/д"
-    age_seconds = max(int((collector.now_local() - parsed).total_seconds()), 0)
-    return collector.format_age(age_seconds)
+        return None
+    return max(int((collector.now_local() - parsed).total_seconds()), 0)
 
 
 def _format_snapshot_clock(updated_at: object) -> str:
@@ -240,8 +255,11 @@ def _peer_matches_filter(
     active_only: bool,
     status_filter: str = "Все",
     location_filter: str = "Все",
+    quick_filter: str = "all",
 ) -> bool:
     is_active = bool(peer.get("active_value"))
+    if not _peer_matches_quick_filter(peer, quick_filter):
+        return False
     if active_only and not is_active:
         return False
     if status_filter == "Онлайн" and not is_active:
@@ -279,6 +297,36 @@ def _peer_detail_note(peer: Dict[str, object]) -> str:
     if _coerce_int(age) >= 900:
         return "Давно не выходил на связь."
     return "Пир пока неактивен, но недавно был виден."
+
+
+def _peer_diagnostic_state(peer: Dict[str, object]) -> Dict[str, str]:
+    if not peer:
+        return {"key": "none", "label": "Нет выбора", "level": "neutral"}
+    if not bool(peer.get("active_value")):
+        return {"key": "offline", "label": "Нет связи", "level": "danger"}
+    recommended_mtu = str(peer.get("recommended_mtu", "") or "")
+    interface_mtu = str(peer.get("interface_mtu", "") or "")
+    if recommended_mtu in {"", "н/д"}:
+        return {"key": "mtu", "label": "MTU unknown", "level": "warn"}
+    if interface_mtu and interface_mtu not in {"н/д", recommended_mtu}:
+        return {"key": "mtu", "label": "MTU issue", "level": "danger"}
+    age_seconds = peer.get("handshake_age_seconds")
+    if age_seconds is not None and _coerce_int(age_seconds) >= 600:
+        return {"key": "stale", "label": "Тихий >10м", "level": "warn"}
+    if _coerce_float(peer.get("share_value")) >= 15 or _coerce_int(peer.get("current_bps")) >= 1024 * 1024:
+        return {"key": "top", "label": "Топ трафика", "level": "ok"}
+    return {"key": "ok", "label": "Норма", "level": "ok"}
+
+
+def _peer_matches_quick_filter(peer: Dict[str, object], quick_filter: str) -> bool:
+    if quick_filter in ("", "all", "Все"):
+        return True
+    diagnostic = _peer_diagnostic_state(peer)
+    if quick_filter == "active":
+        return bool(peer.get("active_value")) and _coerce_int(peer.get("current_bps")) > 0
+    if quick_filter == "issues":
+        return diagnostic["key"] in {"offline", "stale", "mtu"}
+    return diagnostic["key"] == quick_filter
 
 
 def _show_widget(widget: object) -> None:
@@ -322,6 +370,7 @@ def _focus_existing_window() -> bool:
         return False
 
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    found = ctypes.c_bool(False)
 
     def _enum_callback(hwnd: int, lparam: int) -> bool:
         if not user32.IsWindowVisible(hwnd):
@@ -337,10 +386,12 @@ def _focus_existing_window() -> bool:
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.SetForegroundWindow(hwnd)
         user32.BringWindowToTop(hwnd)
+        found.value = True
         return False
 
     enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)(_enum_callback)
-    return bool(user32.EnumWindows(enum_proc, 0))
+    user32.EnumWindows(enum_proc, 0)
+    return bool(found.value)
 
 
 def _resolve_ssh_executable() -> str:
@@ -494,10 +545,31 @@ def _start_ssh_tunnel(host: str, user: str, key_path: str, local_port: int, remo
     )
 
 
+_TRANSIENT_FETCH_EXCEPTIONS = (ConnectionResetError, TimeoutError, RemoteDisconnected)
+
+
+def _is_transient_fetch_error(exc: BaseException) -> bool:
+    if isinstance(exc, HTTPError):
+        return False
+    if isinstance(exc, _TRANSIENT_FETCH_EXCEPTIONS):
+        return True
+    if isinstance(exc, URLError):
+        return isinstance(exc.reason, _TRANSIENT_FETCH_EXCEPTIONS)
+    return False
+
+
 def fetch_summary(url: str, timeout: float = REQUEST_TIMEOUT_SECONDS) -> Dict[str, object]:
     request = Request(url, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
-    with urlopen(request, timeout=timeout) as response:
-        payload = response.read().decode("utf-8")
+    retry_delays = FETCH_RETRY_DELAYS_SECONDS
+    for attempt in range(len(retry_delays) + 1):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                payload = response.read().decode("utf-8")
+            break
+        except Exception as exc:
+            if attempt >= len(retry_delays) or not _is_transient_fetch_error(exc):
+                raise
+            time.sleep(retry_delays[attempt])
     summary = json.loads(payload)
     if not isinstance(summary, dict):
         raise ValueError("Dashboard payload must be a JSON object")
@@ -516,6 +588,9 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
     disk = server.get("disk_root", {}) if isinstance(server.get("disk_root", {}), dict) else {}
     ping = server.get("ping", {}) if isinstance(server.get("ping", {}), dict) else {}
     warnings = [str(item) for item in summary.get("warnings", []) if str(item).strip()]
+    server_ping_label = _format_latency(ping.get("latency_avg_ms"))
+    server_packet_loss_label = _format_loss(ping.get("packet_loss_percent"))
+    snapshot_age_seconds = _snapshot_age_seconds(summary.get("updated_at"))
 
     capacity_bps = _coerce_int(bandwidth.get("capacity_bytes_per_sec"))
     current_total_bps = _coerce_int(vpn.get("current_total_bps"))
@@ -576,6 +651,8 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
                 "interface_mtu": interface_mtu_label,
                 "interface_mtu_note": "awg0 inside container" if interface_mtu else "н/д",
                 "recommended_mtu": recommended_mtu_label,
+                "server_ping": server_ping_label,
+                "packet_loss": server_packet_loss_label,
             }
         )
 
@@ -601,6 +678,7 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
         "updated_clock": _format_snapshot_clock(summary.get("updated_at")),
         "updated_day": _format_snapshot_day(summary.get("updated_at")),
         "age_label": _format_snapshot_age(summary.get("updated_at")),
+        "snapshot_age_seconds": snapshot_age_seconds,
         "container_label": f"{container.get('name', '')} [{collector.translate_container_status(str(container.get('status', '')))}]",
         "container_status": collector.translate_container_status(str(container.get("status", ""))),
         "container_image": str(container.get("image", "")),
@@ -648,7 +726,9 @@ def build_view_model(summary: Dict[str, object], source_url: str, refresh_second
             disk.get("used_percent"),
         ),
         "server_uptime": collector.format_age(_coerce_int(server.get("uptime_seconds"))),
-        "server_ping": _format_latency(ping.get("latency_avg_ms")),
+        "server_ping": server_ping_label,
+        "server_packet_loss": server_packet_loss_label,
+        "server_packet_loss_value": _coerce_float(ping.get("packet_loss_percent")) if ping.get("packet_loss_percent") is not None else 0.0,
         "warnings": warnings,
         "peer_rows": peer_rows,
     }
@@ -697,8 +777,11 @@ class ShellApp:
         self._status_filter = tk.StringVar(master=self.root, value="Все")
         self._location_filter = tk.StringVar(master=self.root, value="Все")
         self._period_filter = tk.StringVar(master=self.root, value="Сегодня")
+        self._quick_filter = "all"
+        self._quick_filter_buttons: Dict[str, tk.Button] = {}
         self._location_filter_combo: Optional[ttk.Combobox] = None
         self._top_status_labels: Dict[str, tk.Label] = {}
+        self._ops_summary_label: Optional[tk.Label] = None
         self._channel_row_value_labels: Dict[str, tk.Label] = {}
         self._card_value_labels: Dict[str, tk.Label] = {}
         self._card_secondary_value_labels: Dict[str, tk.Label] = {}
@@ -725,6 +808,10 @@ class ShellApp:
         self.root.title("Autostop VPN Monitor")
         self.root.geometry("1660x940")
         self.root.minsize(1280, 760)
+        try:
+            self.root.state("zoomed")
+        except tk.TclError:  # pragma: no cover - platform/window-manager dependent
+            pass
         self.root.configure(background=APP_BG)
 
         self._build_styles()
@@ -801,7 +888,7 @@ class ShellApp:
         container = tk.Frame(root, bg=APP_BG, padx=16, pady=14)
         container.grid(row=0, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
-        container.rowconfigure(3, weight=1)
+        container.rowconfigure(4, weight=1)
 
         hero = tk.Frame(container, bg=APP_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=12, pady=7)
         hero.grid(row=0, column=0, sticky="ew")
@@ -810,6 +897,17 @@ class ShellApp:
         tk.Label(hero, text="VPN Мониторинг", bg=APP_BG, fg=TEXT_PRIMARY, font=(FONT_UI, 16, "normal")).grid(
             row=0, column=0, sticky="w"
         )
+        self._ops_summary_label = tk.Label(
+            hero,
+            text="ожидание snapshot...",
+            bg=APP_BG,
+            fg=TEXT_PRIMARY,
+            font=(FONT_UI, 9, "bold"),
+            wraplength=820,
+            justify="left",
+            anchor="w",
+        )
+        self._ops_summary_label.grid(row=1, column=0, sticky="ew", pady=(3, 0))
         self.updated_label = tk.Label(
             hero,
             text=f"{HEADER_BASE_TEXT} • waiting for snapshot",
@@ -820,9 +918,9 @@ class ShellApp:
             justify="left",
             anchor="w",
         )
-        self.updated_label.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        self.updated_label.grid(row=2, column=0, sticky="ew", pady=(2, 0))
         status_panel = tk.Frame(hero, bg=APP_BG)
-        status_panel.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(12, 0))
+        status_panel.grid(row=0, column=1, rowspan=3, sticky="ne", padx=(12, 0))
         status_top = tk.Frame(status_panel, bg=APP_BG)
         status_top.grid(row=0, column=0, sticky="e")
         self._status_indicator_canvas = tk.Canvas(
@@ -845,6 +943,7 @@ class ShellApp:
         self.state_label.pack(side="left")
         for key, label in (
             ("vpn", "Сервер VPN: —"),
+            ("loss", "Потери: —"),
             ("time", "Время: —"),
             ("uptime", "Аптайм: —"),
             ("refresh", f"Обновление: {self.refresh_seconds:g} сек"),
@@ -873,7 +972,7 @@ class ShellApp:
         ).pack(side="left", padx=(0, 8))
         tk.Button(
             status_actions,
-            text="Закрыть",
+            text="Закрыть мониторинг",
             command=self.close,
             bg=INPUT_BG,
             fg=TEXT_PRIMARY,
@@ -1011,8 +1110,41 @@ class ShellApp:
             value.grid(row=row_index, column=1, sticky="e", pady=3, padx=(18, 0))
             self._trend_stat_labels[key] = value
 
+        quick_bar = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=5)
+        quick_bar.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        for idx, (key, title) in enumerate(
+            (
+                ("all", "Все пиры"),
+                ("top", "Топ трафика"),
+                ("offline", "Без связи"),
+                ("stale", "Тихие >10м"),
+                ("mtu", "MTU issue"),
+                ("active", "Активные сейчас"),
+                ("issues", "Требуют внимания"),
+            )
+        ):
+            button = tk.Button(
+                quick_bar,
+                text=title,
+                command=lambda value=key: self._set_quick_filter(value),
+                bg=ACCENT_SOFT if key == "all" else PANEL_ALT_BG,
+                fg=ACCENT if key == "all" else TEXT_MUTED,
+                relief="flat",
+                bd=0,
+                activebackground=ACCENT_SOFT,
+                activeforeground=ACCENT,
+                highlightthickness=1,
+                highlightbackground=ACCENT if key == "all" else BORDER_BG,
+                highlightcolor=ACCENT,
+                font=(FONT_UI, 8, "bold"),
+                padx=8,
+                pady=3,
+            )
+            button.grid(row=0, column=idx, sticky="w", padx=(0 if idx == 0 else 6, 0))
+            self._quick_filter_buttons[key] = button
+
         filter_bar = tk.Frame(container, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=10, pady=6)
-        filter_bar.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        filter_bar.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         filter_bar.columnconfigure(0, weight=1)
         search_entry = tk.Entry(
             filter_bar,
@@ -1063,7 +1195,7 @@ class ShellApp:
         self.visible_count_label.grid(row=0, column=5, sticky="e", padx=(12, 0))
 
         main = tk.Frame(container, bg=APP_BG)
-        main.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        main.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
         main.columnconfigure(0, weight=4)
         main.columnconfigure(1, weight=1, minsize=360)
         main.rowconfigure(0, weight=1)
@@ -1086,12 +1218,27 @@ class ShellApp:
         self.table_status_label = tk.Label(table_header, text="", bg=PANEL_BG, fg=TEXT_MUTED, font=(FONT_MONO, 8))
         self.table_status_label.grid(row=0, column=1, sticky="e")
 
-        columns = ("status", "name", "vpn_ip", "location", "channel", "handshake", "rx", "tx", "current", "share", "today", "total")
+        columns = (
+            "status",
+            "name",
+            "vpn_ip",
+            "diagnosis",
+            "location",
+            "channel",
+            "handshake",
+            "rx",
+            "tx",
+            "current",
+            "share",
+            "today",
+            "total",
+        )
         self.peer_tree = ttk.Treeview(table_card, columns=columns, show="headings", style="Shell.Treeview", selectmode="browse")
         headings = {
             "status": "Статус",
             "name": "Пир",
             "vpn_ip": "Виртуальный IP",
+            "diagnosis": "Диагноз",
             "location": "Площадка",
             "channel": "Канал",
             "handshake": "Время отклика",
@@ -1106,6 +1253,7 @@ class ShellApp:
             "status": 72,
             "name": 128,
             "vpn_ip": 116,
+            "diagnosis": 116,
             "location": 190,
             "channel": 82,
             "handshake": 112,
@@ -1124,8 +1272,13 @@ class ShellApp:
                 anchor="w",
                 stretch=column in {"name", "vpn_ip", "current", "today", "total", "location"},
             )
-        self.peer_tree.tag_configure("active", background=ROW_ACTIVE_BG, foreground=TEXT_PRIMARY)
+        self.peer_tree.tag_configure("active", background="#0d2029", foreground=TEXT_PRIMARY)
         self.peer_tree.tag_configure("inactive", background=ROW_INACTIVE_BG, foreground=TEXT_MUTED)
+        self.peer_tree.tag_configure("issue_top", background="#103225", foreground=TEXT_PRIMARY)
+        self.peer_tree.tag_configure("issue_offline", background="#2f2516", foreground=TEXT_PRIMARY)
+        self.peer_tree.tag_configure("issue_stale", background="#2f2516", foreground=TEXT_PRIMARY)
+        self.peer_tree.tag_configure("issue_mtu", background="#37181c", foreground=TEXT_PRIMARY)
+        self.peer_tree.tag_configure("issue_ok", background="#0d2029", foreground=TEXT_PRIMARY)
         self.peer_tree.bind("<<TreeviewSelect>>", self._on_peer_tree_select)
         peer_scroll = ttk.Scrollbar(table_card, orient="vertical", command=self.peer_tree.yview, style="Shell.Vertical.TScrollbar")
         self.peer_tree.configure(yscrollcommand=peer_scroll.set)
@@ -1186,10 +1339,13 @@ class ShellApp:
             ("endpoint", "ENDPOINT"),
             ("active", "Статус"),
             ("handshake", "HANDSHAKE"),
-            ("rx", "Входящий"),
-            ("tx", "Исходящий"),
+            ("server_ping", "Ping"),
+            ("packet_loss", "Loss"),
             ("current", "Поток"),
             ("share", "Доля"),
+            ("recommended_mtu", "MTU target"),
+            ("today", "Сегодня"),
+            ("total", "Накоплено"),
         ]
         for row_index, (key, title) in enumerate(detail_rows):
             label = tk.Label(details_grid, text=title, bg=PANEL_BG, fg=TEXT_MUTED, font=(FONT_UI, 8, "bold"), anchor="w")
@@ -1207,8 +1363,47 @@ class ShellApp:
             value.grid(row=row_index, column=1, sticky="ew", pady=2, padx=(8, 0))
             self._detail_value_labels[key] = value
 
+        detail_actions = tk.Frame(detail_card, bg=PANEL_BG)
+        detail_actions.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        detail_actions.columnconfigure(0, weight=1)
+        detail_actions.columnconfigure(1, weight=1)
+        tk.Button(
+            detail_actions,
+            text="Копировать endpoint",
+            command=self._copy_selected_endpoint,
+            bg=PANEL_ALT_BG,
+            fg=TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            activebackground=ACCENT_SOFT,
+            activeforeground=ACCENT,
+            highlightthickness=1,
+            highlightbackground=BORDER_BG,
+            highlightcolor=ACCENT,
+            font=(FONT_UI, 8, "bold"),
+            padx=6,
+            pady=4,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        tk.Button(
+            detail_actions,
+            text="Профиль телефона",
+            command=self._copy_selected_phone_profile,
+            bg=PANEL_ALT_BG,
+            fg=TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            activebackground=ACCENT_SOFT,
+            activeforeground=ACCENT,
+            highlightthickness=1,
+            highlightbackground=BORDER_BG,
+            highlightcolor=ACCENT,
+            font=(FONT_UI, 8, "bold"),
+            padx=6,
+            pady=4,
+        ).grid(row=0, column=1, sticky="ew", padx=(5, 0))
+
         event_box = tk.Frame(detail_card, bg=PANEL_BG, highlightbackground=BORDER_BG, highlightthickness=1, padx=8, pady=8)
-        event_box.grid(row=5, column=0, sticky="ew", pady=(12, 0))
+        event_box.grid(row=6, column=0, sticky="ew", pady=(10, 0))
         tk.Label(event_box, text="Последние события", bg=PANEL_BG, fg=TEXT_PRIMARY, font=(FONT_UI, 9, "bold")).grid(
             row=0, column=0, sticky="w", pady=(0, 6)
         )
@@ -1228,7 +1423,7 @@ class ShellApp:
             self._detail_event_labels.append(event_label)
 
         footer_row = tk.Frame(container, bg=APP_BG)
-        footer_row.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        footer_row.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         footer_row.columnconfigure(0, weight=1)
         self.footer_label = tk.Label(footer_row, text="", bg=APP_BG, fg=TEXT_MUTED, font=(FONT_MONO, 8))
         self.footer_label.grid(row=0, column=0, sticky="w")
@@ -1381,6 +1576,22 @@ class ShellApp:
             canvas.create_line(inner_pad, y, width - inner_pad, y, fill=grid_color, width=1)
         for x in range(inner_pad + 28, width - inner_pad + 1, 168):
             canvas.create_line(x, inner_pad + 14, x, height - inner_pad, fill=soft_grid, width=1, dash=(2, 8))
+        canvas.create_text(
+            inner_pad,
+            inner_pad + 4,
+            anchor="w",
+            fill=TEXT_MUTED,
+            font=("Consolas", 7),
+            text="detail scale: live RX/TX bars + 90 snapshot trend",
+        )
+        canvas.create_text(
+            width - inner_pad,
+            inner_pad + 4,
+            anchor="e",
+            fill=TEXT_MUTED,
+            font=("Consolas", 7),
+            text="RX blue / TX green",
+        )
 
         def _draw_metric_bar(y_top: int, label: str, value_bps: float, limit_bps: float, fill_color: str, outline: str) -> None:
             label_width = 162
@@ -1456,6 +1667,8 @@ class ShellApp:
         spark_width = max(plot_width, 1)
         baseline_y = spark_bottom - 2
         canvas.create_line(inner_pad, baseline_y, width - inner_pad, baseline_y, fill="#172b35", width=1)
+        canvas.create_text(inner_pad, spark_bottom - 4, anchor="sw", fill=TEXT_MUTED, font=("Consolas", 7), text="-90s")
+        canvas.create_text(width - inner_pad, spark_bottom - 4, anchor="se", fill=TEXT_MUTED, font=("Consolas", 7), text="now")
         if len(self._traffic_history) == 1:
             value = self._traffic_history[0]
             fill_height = int(spark_height * (value / history_max))
@@ -1508,6 +1721,48 @@ class ShellApp:
         self._status_filter.set("Все")
         self._location_filter.set("Все")
         self._period_filter.set("Сегодня")
+        self._set_quick_filter("all")
+
+    def _set_quick_filter(self, value: str) -> None:
+        self._quick_filter = value or "all"
+        if self._quick_filter != "all" and self._status_filter.get() != "Все":
+            self._status_filter.set("Все")
+        self._refresh_quick_filter_buttons()
+        self._apply_peer_filter()
+
+    def _refresh_quick_filter_buttons(self) -> None:
+        for key, button in self._quick_filter_buttons.items():
+            active = key == self._quick_filter
+            button.configure(
+                bg=ACCENT_SOFT if active else PANEL_ALT_BG,
+                fg=ACCENT if active else TEXT_MUTED,
+                highlightbackground=ACCENT if active else BORDER_BG,
+            )
+
+    def _copy_to_clipboard(self, text: str, status_message: str) -> None:
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self._status_base_text = HEADER_BASE_TEXT
+            self.updated_label.configure(text=f"{HEADER_BASE_TEXT} • {status_message}", bg=STATUS_BG, fg=STATUS_TEXT)
+        except Exception as exc:
+            self._append_runtime_error("clipboard", exc)
+
+    def _copy_selected_endpoint(self) -> None:
+        peer = self._peer_rows_by_key.get(self._selected_peer_key or "", {})
+        endpoint = str(peer.get("endpoint", "") or "")
+        if not endpoint:
+            return
+        self._copy_to_clipboard(endpoint, f"endpoint скопирован: {endpoint}")
+
+    def _copy_selected_phone_profile(self) -> None:
+        peer = self._peer_rows_by_key.get(self._selected_peer_key or "", {})
+        endpoint = str(peer.get("endpoint", "") or "")
+        mtu = str(peer.get("recommended_mtu", "1280 B")).replace(" B", "")
+        if not endpoint:
+            return
+        profile = f"Endpoint = {endpoint}\nMTU = {mtu}\nPersistentKeepalive = 25"
+        self._copy_to_clipboard(profile, "профиль телефона скопирован")
 
     def _refresh_location_filter_options(self) -> None:
         combo = getattr(self, "_location_filter_combo", None)
@@ -1544,12 +1799,30 @@ class ShellApp:
         age_label = str(model.get("age_label", "н/д"))
         refresh_seconds = _coerce_float(model.get("refresh_seconds"))
         server_ping = str(model.get("server_ping", "н/д"))
+        server_packet_loss = str(model.get("server_packet_loss", "н/д"))
+        server_packet_loss_value = _coerce_float(model.get("server_packet_loss_value"))
         server_load = str(model.get("server_load", "н/д"))
         server_memory = str(model.get("server_memory", "н/д"))
         server_uptime = str(model.get("server_uptime", "н/д"))
         daily_average = str(model.get("daily_average", "н/д"))
         daily_peak = str(model.get("daily_peak", "н/д"))
         utilization_value = max(0.0, min(_coerce_float(model.get("bandwidth_utilization_value")), 100.0))
+        issue_count = sum(
+            1 for peer in peer_rows if _peer_diagnostic_state(peer)["key"] in {"offline", "stale", "mtu"}
+        )
+        top_count = sum(1 for peer in peer_rows if _peer_diagnostic_state(peer)["key"] == "top")
+        snapshot_age_seconds = model.get("snapshot_age_seconds")
+        snapshot_is_fresh = snapshot_age_seconds is None or _coerce_int(snapshot_age_seconds) <= 10
+        ops_summary_label = getattr(self, "_ops_summary_label", None)
+        if ops_summary_label is not None:
+            leader = str(top_peer.get("name") or top_peer.get("vpn_ip") or "—") if top_peer else "—"
+            ops_summary_label.configure(
+                text=(
+                    f"{total_peers} пиров • {active_connections} активны • {offline_connections} без связи • "
+                    f"{issue_count} требуют внимания • лидер {leader} • данные {age_label}"
+                ),
+                fg=TEXT_PRIMARY if snapshot_is_fresh else WARN_TEXT,
+            )
 
         self._card_value_labels["channel"].configure(text=current_total)
         channel_secondary = self._card_secondary_value_labels.get("channel")
@@ -1581,13 +1854,13 @@ class ShellApp:
         offline_label = _format_percent_pair(offline_connections, total_peers)
         self._card_value_labels["peers"].configure(text=f"{total_peers}")
         self._card_note_labels["peers"].configure(
-            text=f"Онлайн {active_label} | Оффлайн {offline_label} | показано {visible_count}"
+            text=f"Онлайн {active_label} | Оффлайн {offline_label} | проблем {issue_count} | топ {top_count}"
         )
 
         server_online = 1 if str(model.get("container_status", "")).lower() in {"работает", "running"} else 0
         self._card_value_labels["server"].configure(text="1")
         self._card_note_labels["server"].configure(
-            text=f"Онлайн {server_online} (100%) | ping {server_ping} | load {server_load}"
+            text=f"Онлайн {server_online} (100%) | ping {server_ping} | loss {server_packet_loss} | load {server_load}"
         )
 
         self._card_value_labels["snapshot"].configure(text="1")
@@ -1603,12 +1876,14 @@ class ShellApp:
 
         for key, value in {
             "time": f"Время: {updated_clock}",
+            "loss": f"Потери: {server_packet_loss}",
             "uptime": f"Аптайм: {server_uptime}",
             "refresh": f"Обновление: {refresh_seconds:g} сек",
         }.items():
             label = getattr(self, "_top_status_labels", {}).get(key)
             if label is not None:
-                label.configure(text=str(value), fg=TEXT_MUTED)
+                fg = WARN_TEXT if key == "loss" and server_packet_loss_value > 2 else TEXT_MUTED
+                label.configure(text=str(value), fg=fg)
         for key, value in {
             "rx": current_rx,
             "tx": current_tx,
@@ -1627,10 +1902,11 @@ class ShellApp:
         active_only = bool(self._active_only.get())
         status_filter = str(self._status_filter.get() or "Все")
         location_filter = str(self._location_filter.get() or "Все")
+        quick_filter = str(getattr(self, "_quick_filter", "all") or "all")
         self._filtered_peer_rows = [
             peer
             for peer in self._all_peer_rows
-            if _peer_matches_filter(peer, query, active_only, status_filter, location_filter)
+            if _peer_matches_filter(peer, query, active_only, status_filter, location_filter, quick_filter)
         ]
         self._populate_peers(self._filtered_peer_rows)
         self._update_peer_counts()
@@ -1651,6 +1927,16 @@ class ShellApp:
             mode_parts.append(f"площадка: {self._location_filter.get()}")
         if self._period_filter.get():
             mode_parts.append(f"период: {self._period_filter.get()}")
+        if getattr(self, "_quick_filter", "all") != "all":
+            quick_titles = {
+                "top": "топ трафика",
+                "offline": "без связи",
+                "stale": "тихие >10м",
+                "mtu": "MTU issue",
+                "active": "активные сейчас",
+                "issues": "требуют внимания",
+            }
+            mode_parts.append(f"сценарий: {quick_titles.get(self._quick_filter, self._quick_filter)}")
         mode_text = f" | {'; '.join(mode_parts)}" if mode_parts else ""
         self.visible_count_label.configure(text=f"Показано {visible}/{total} | активных {active}{mode_text}")
         self.table_status_label.configure(text=f"{visible} peers")
@@ -1732,8 +2018,23 @@ class ShellApp:
         today = str(peer.get("today", "—"))
         total = str(peer.get("total", "—"))
         public_key_short = str(peer.get("public_key_short", "")) or "—"
-        note = _peer_detail_note(peer)
-        note_bg, note_fg = (ACCENT_SOFT, ACCENT) if bool(peer.get("active_value")) else (STATUS_BG, TEXT_MUTED)
+        server_ping = str(peer.get("server_ping", "н/д"))
+        packet_loss = str(peer.get("packet_loss", "н/д"))
+        diagnostic = _peer_diagnostic_state(peer)
+        if diagnostic["key"] in {"ok", "top"}:
+            note = _peer_detail_note(peer)
+        elif diagnostic["key"] == "mtu":
+            note = "Пир виден, но профиль MTU требует сверки с target 1280."
+        elif diagnostic["key"] == "stale":
+            note = "Пир давно не давал свежий handshake."
+        else:
+            note = _peer_detail_note(peer)
+        if diagnostic["level"] == "danger":
+            note_bg, note_fg = ERROR_BG, ERROR_TEXT
+        elif diagnostic["level"] == "warn":
+            note_bg, note_fg = WARN_BG, WARN_TEXT
+        else:
+            note_bg, note_fg = ACCENT_SOFT, ACCENT
 
         def set_detail_value(key: str, text: object) -> None:
             label = self._detail_value_labels.get(key)
@@ -1751,6 +2052,8 @@ class ShellApp:
         set_detail_value("vpn_ip", vpn_ip)
         set_detail_value("active", active)
         set_detail_value("handshake", handshake)
+        set_detail_value("server_ping", server_ping)
+        set_detail_value("packet_loss", packet_loss)
         set_detail_value("rx", rx)
         set_detail_value("tx", tx)
         set_detail_value("current", current)
@@ -1761,8 +2064,8 @@ class ShellApp:
         event_items = [
             ("●", f"{handshake}: {'соединение активно' if bool(peer.get('active_value')) else 'нет свежего handshake'}", ACCENT if bool(peer.get("active_value")) else TEXT_MUTED),
             ("●", f"Трафик: {current} / доля {share}", CYAN),
-            ("●", f"Площадка: {_location_bucket(location)}", TEXT_MUTED),
-            ("●", f"MTU target: {recommended_mtu}", WARN_TEXT if recommended_mtu == "н/д" else TEXT_MUTED),
+            ("●", f"Ping {server_ping} / packet loss {packet_loss}", WARN_TEXT if packet_loss not in {"0.00%", "0%", "н/д"} else TEXT_MUTED),
+            ("●", f"MTU target: {recommended_mtu}", WARN_TEXT if diagnostic["key"] == "mtu" else TEXT_MUTED),
         ]
         for label, event in zip(self._detail_event_labels, event_items):
             marker, text, color = event
@@ -1931,6 +2234,10 @@ class ShellApp:
                 )
                 self._render_trend_graph(model)
                 self._set_warning_text(model.get("warnings", []))
+                source_url = str(model.get("source_url") or getattr(self, "dashboard_url", ""))
+                age_seconds = model.get("snapshot_age_seconds")
+                fresh_label = "данные свежие" if age_seconds is None or _coerce_int(age_seconds) <= 10 else "данные устарели"
+                self.footer_label.configure(text=f"Источник: {source_url} | age {age_label} | {fresh_label} | сервер доступен")
                 self.connection_label.configure(text="LINK UP")
                 self._set_status_mode("online")
                 self._schedule_refresh()
@@ -1955,7 +2262,9 @@ class ShellApp:
                 self._select_peer(previous_selection)
             elif not self._filtered_peer_rows:
                 self._select_peer(None)
-            self.footer_label.configure(text=f"Источник: {model['source_url']}")
+            age_seconds = model.get("snapshot_age_seconds")
+            fresh_label = "данные свежие" if age_seconds is None or _coerce_int(age_seconds) <= 10 else "данные устарели"
+            self.footer_label.configure(text=f"Источник: {model['source_url']} | age {age_label} | {fresh_label} | сервер доступен")
             self.connection_label.configure(text="LINK UP")
             self._schedule_refresh()
         except Exception as exc:
@@ -1972,7 +2281,7 @@ class ShellApp:
         self.connection_label.configure(text="LINK DOWN")
         if self._last_model is None:
             self.updated_label.configure(text=f"{HEADER_BASE_TEXT} • SYNC нет данных")
-            self.footer_label.configure(text=f"Источник: {self.dashboard_url}")
+            self.footer_label.configure(text=f"Источник: {self.dashboard_url} | данных нет | сервер недоступен")
             self._set_warning_text([f"Ошибка загрузки: {exc}"])
             self._all_peer_rows = []
             self._filtered_peer_rows = []
@@ -2031,10 +2340,12 @@ class ShellApp:
         if current_ids == desired_ids:
             unchanged = True
             for row, iid in zip(rows, current_ids):
+                diagnostic = _peer_diagnostic_state(row)
                 values = (
                     "●",
                     row["name"],
                     row["vpn_ip"],
+                    diagnostic["label"],
                     row["endpoint_location"],
                     row["channel"],
                     row["handshake"],
@@ -2055,7 +2366,9 @@ class ShellApp:
         if current_ids:
             self.peer_tree.delete(*current_ids)
         for row in rows:
-            tags = ("active",) if bool(row.get("active_value")) else ("inactive",)
+            diagnostic = _peer_diagnostic_state(row)
+            base_tag = "active" if bool(row.get("active_value")) else "inactive"
+            tags = (base_tag, f"issue_{diagnostic['key']}")
             self.peer_tree.insert(
                 "",
                 "end",
@@ -2065,6 +2378,7 @@ class ShellApp:
                     "●",
                     row["name"],
                     row["vpn_ip"],
+                    diagnostic["label"],
                     row["endpoint_location"],
                     row["channel"],
                     row["handshake"],
