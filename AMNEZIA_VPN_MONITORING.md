@@ -120,6 +120,35 @@ PersistentKeepalive = 25
 5. Test Telegram on each phone after 15 minutes of idle time, media download, voice note playback, media upload, and Wi-Fi/LTE switching.
 6. Watch the rollout for 30-60 minutes first, then a normal workday. The pass condition is no case where Telegram only recovers after restarting the mobile app, no noticeable battery or heat complaints, and no normal browsing regression through the VPN.
 
+## Client Rollout Impact
+
+The current server-side baseline affects all peers automatically once they connect:
+
+- live/config `awg0 MTU=1280`
+- generic `awg0` TCP MSS clamp at `1240`
+- server-side `PersistentKeepalive=25` for all 57 peer entries
+- UDP `443` DNAT available alongside the existing `47895/udp` listener
+- VPS/container resolver moved to Cloudflare DNS
+
+This does not rewrite existing client profiles. A device that already has `Endpoint = 46.8.254.243:47895`, no explicit `MTU`, or no client-side `PersistentKeepalive` keeps those local settings until the profile is edited or re-imported.
+
+Rollout priority:
+
+1. Phones and users who noticed Telegram/media slowdown.
+2. Mobile users on restrictive Wi-Fi/LTE networks.
+3. Active desktop users during their normal support window.
+4. Stale or never-handshaked peers only when the owner returns and needs the VPN again.
+
+The target client profile is:
+
+```ini
+Endpoint = 46.8.254.243:443
+MTU = 1280
+PersistentKeepalive = 25
+```
+
+Keep the existing keys, `AllowedIPs`, and user identity. Do not rotate keys only to adopt these transport settings.
+
 If Telegram still improves but remains imperfect after the current `1280/1240` baseline, do not immediately lower only the server MTU. First confirm that the phone profile itself contains `MTU = 1280` and `PersistentKeepalive = 25`, and that the phone OS is not battery-throttling the VPN app or Telegram. The next controlled experiments are:
 
 - client-side `PersistentKeepalive = 15` on affected phones

@@ -128,6 +128,22 @@ Server-side peer keepalive is managed by `apply_telegram_keepalive_fix.ps1`; pho
 The post-keepalive server fallback is a generic TCP MSS clamp through `awg0` at `1240`. The read-only monitor reports Telegram-specific rule counters separately; on the current baseline, the expected active fallback signal is `generic_awg0_mss_in=1` and `generic_awg0_mss_out=1`.
 The collector also caches endpoint geo labels and MTU probe results so normal refresh cycles stay light.
 
+## Client Rollout Impact
+
+The server-side fixes are already active for every peer that connects through this VPN: `awg0 MTU=1280`, generic TCP MSS clamp `1240`, server peer `PersistentKeepalive=25`, Cloudflare resolver on the VPS/container, and the UDP `443` DNAT endpoint. These do not require users to reconnect or re-import a profile before they benefit from the server path.
+
+Client profile fields are different: existing devices keep whatever is stored locally in the Amnezia/WireGuard app. The server cannot remotely rewrite a phone or desktop profile from `47895` to `443`, add client-side `MTU=1280`, or add client-side `PersistentKeepalive=25`.
+
+Roll out new profiles in this order:
+
+1. Update phones and users who reported Telegram/media slowdowns first.
+2. Use `Endpoint = 46.8.254.243:443`, `MTU = 1280`, and `PersistentKeepalive = 25`.
+3. Keep existing keys, `AllowedIPs`, and user identity; only transport/MTU/keepalive need to change.
+4. Leave healthy desktop users on `47895` until their normal maintenance window; `47895/udp` remains active.
+5. Treat stale or never-handshaked peers as inactive inventory. Reissue them with the current profile standard when the user returns.
+
+After a profile update, ask the user to disconnect/reconnect the VPN, leave the device idle for 10-15 minutes, then test normal browsing plus Telegram text, media download, media upload, and voice notes.
+
 ## Generated Data
 
 The collector writes into `amnezia_traffic_collector.py`'s data directory:

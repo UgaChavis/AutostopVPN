@@ -212,10 +212,44 @@ The latest scheduled run on 2026-06-10 at 03:17 local time completed with `LastT
 - server `8.8.8.8`: `10/10`, `0%` loss
 - server Telegram API: `telegram_api_https_ok=true`
 
+## 13. Client Rollout Impact
+
+The live server state confirms that the server-side changes are already active for all peers that connect:
+
+- total peers: `57`
+- active within 180 seconds in the latest sample: `21`
+- active within 600 seconds in the latest sample: `26`
+- endpoint known: `57`
+- server-side `PersistentKeepalive=25`: `57`
+- server-side `PersistentKeepalive=0`: `0`
+- live/config `awg0 MTU`: `1280`
+- generic TCP MSS clamp rules: `2`
+- UDP `443` forward: active
+
+These server-side settings protect the shared VPN path and do not require a new key or server restart. Existing clients on `46.8.254.243:47895` continue to work because `47895/udp` remains published.
+
+The server cannot prove or rewrite local client profile fields. A phone or desktop keeps its existing `Endpoint`, local `MTU`, `DNS`, and client-side `PersistentKeepalive` until the profile is edited or re-imported. For lowest risk, update client profiles only where needed first:
+
+1. users who reported Telegram/media slowness
+2. mobile users
+3. users on restrictive Wi-Fi/LTE networks
+4. remaining active desktops during normal maintenance
+5. stale/never-handshaked peers when the user returns
+
+The target client profile delta is:
+
+```ini
+Endpoint = 46.8.254.243:443
+MTU = 1280
+PersistentKeepalive = 25
+```
+
+Keep existing keys and `AllowedIPs`.
+
 The secret-bearing service ImagePath backups are intentionally outside the repository under `%LOCALAPPDATA%\AutostopVPN\secret-backups`.
 Recurring short recovery checks are logged under `%LOCALAPPDATA%\AutostopVPN\logs`.
 
-## 13. Official References
+## 14. Official References
 
 - [AmneziaWG docs](https://docs.amnezia.org/ru/documentation/amnezia-wg/)
 - [How Amnezia works](https://docs.amnezia.org/documentation/how-amnezia-works/)
