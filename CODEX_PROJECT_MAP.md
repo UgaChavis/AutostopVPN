@@ -22,7 +22,8 @@ Last verified from the live server on 2026-06-01.
 - the dashboard shows a top traffic banner with load, headroom, and risk state
 - `amnezia_server_info.json`: server metadata, SSH details, bandwidth limit, notes
 - `open_amnezia_dashboard.ps1` and `open_amnezia_dashboard.cmd`: Windows shell launchers
-- `check_autostopvpn_network.ps1`: read-only outage monitor for SSH, provider loss, WireGuard handshakes, alternate UDP endpoint state, Telegram mobile readiness, MSS counters, gateway jitter, and traffic deltas
+- `check_autostopvpn_network.ps1`: read-only outage monitor for SSH, provider loss, WireGuard handshakes, alternate UDP endpoint state, Cloudflare/Google egress comparison, Telegram mobile readiness, MSS counters, gateway jitter, and traffic deltas
+- `scheduled_recovery_checks.ps1`: logged Windows recovery check wrapper for local Amnezia MTU, Cloudflare/Telegram packet loss, non-critical Google route warnings, Telegram HTTPS, local download speed, and the server read-only monitor
 - `apply_udp443_forward.ps1`: high-risk helper for adding or rolling back the host UDP `443` DNAT forward to the existing `47895/udp` VPN listener without restarting `amnezia-awg2`
 - `apply_telegram_keepalive_fix.ps1`: high-risk helper for applying `PersistentKeepalive=25` to all peers with `-DryRun`, `-WhatIf`, and rollback support
 - `apply_telegram_mtu_fix.ps1`: high-risk helper for live `awg0` MTU changes with `-DryRun` and `-WhatIf`

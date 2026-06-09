@@ -6,10 +6,12 @@ param(
     [string]$Container = "",
     [string]$Interface = "",
     [int]$PingCount = 10,
+    [double]$PingIntervalSeconds = 0.5,
     [int]$SampleSeconds = 15,
     [int]$DownloadBytes = 0,
     [int]$DownloadTimeoutSeconds = 30,
     [int]$ConnectTimeoutSeconds = 15,
+    [int]$SshCommandTimeoutSeconds = 120,
     [int]$TelegramTargetMtu = 1280,
     [int]$TelegramTargetKeepalive = 25,
     [int]$TelegramMss = 1240,
@@ -72,36 +74,55 @@ function Invoke-ReadOnlySsh {
         "-p", "$script:SshPort",
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=$script:ConnectTimeoutSeconds",
+        "-o", "ConnectionAttempts=1",
         "-o", "ServerAliveInterval=5",
         "-o", "ServerAliveCountMax=1",
         $target,
         $RemoteCommand
     )
 
-    $previousErrorActionPreference = $ErrorActionPreference
-    $nativeCommandPreference = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
-    $previousNativeCommandPreference = $null
     $output = @()
     $exitCode = 1
+    $process = $null
     try {
-        $ErrorActionPreference = "Continue"
-        if ($nativeCommandPreference) {
-            $previousNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
-            $PSNativeCommandUseErrorActionPreference = $false
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = "ssh"
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        foreach ($arg in $sshArgs) {
+            [void]$startInfo.ArgumentList.Add($arg)
         }
-        $rawOutput = & ssh @sshArgs 2>&1
-        $output = @($rawOutput | ForEach-Object { $_.ToString() })
-        $exitCode = $LASTEXITCODE
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        [void]$process.Start()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($script:SshCommandTimeoutSeconds * 1000)) {
+            try {
+                $process.Kill($true)
+            }
+            catch {
+                try { $process.Kill() } catch { }
+            }
+            $output = @("SSH command timed out after $script:SshCommandTimeoutSeconds seconds.")
+            $exitCode = 124
+        }
+        else {
+            $process.WaitForExit()
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            $output = @(
+                @($stdout -split "\r?\n" | Where-Object { $_ -ne "" })
+                @($stderr -split "\r?\n" | Where-Object { $_ -ne "" })
+            )
+            $exitCode = $process.ExitCode
+        }
     }
     catch {
         $output = @($_.Exception.Message)
         $exitCode = 1
-    }
-    finally {
-        if ($nativeCommandPreference) {
-            $PSNativeCommandUseErrorActionPreference = $previousNativeCommandPreference
-        }
-        $ErrorActionPreference = $previousErrorActionPreference
     }
 
     if ($exitCode -ne 0 -and -not $AllowFailure) {
@@ -121,7 +142,8 @@ function Invoke-ReadOnlyRemoteScript {
         [switch]$AllowFailure
     )
 
-    $remoteBytes = [System.Text.Encoding]::UTF8.GetBytes($Script)
+    $normalizedScript = $Script -replace "`r`n", "`n" -replace "`r", "`n"
+    $remoteBytes = [System.Text.Encoding]::UTF8.GetBytes($normalizedScript)
     $remoteBase64 = [Convert]::ToBase64String($remoteBytes)
     Invoke-ReadOnlySsh -RemoteCommand "printf '%s' '$remoteBase64' | base64 -d | bash" -AllowFailure:$AllowFailure
 }
@@ -398,8 +420,34 @@ printf '%s\n' "$counters" | awk '/TCPMSS/ {print}'
 
 function Write-TelegramApiAvailability {
     $telegramPingCount = [Math]::Min([Math]::Max($script:PingCount, 1), 20)
-    $remoteCommand = "getent ahostsv4 api.telegram.org | head -n 3 || true; curl -4 -sS -L --max-time $script:DownloadTimeoutSeconds -o /dev/null -w 'http_code=%{http_code} remote_ip=%{remote_ip} time_namelookup=%{time_namelookup} time_connect=%{time_connect} time_appconnect=%{time_appconnect} time_starttransfer=%{time_starttransfer} time_total=%{time_total} speed_download=%{speed_download}\n' https://api.telegram.org/ || true; ping -4 -c $telegramPingCount -i 0.2 api.telegram.org | tail -n 4 || true"
-    Write-CommandResult -Title "Telegram API availability" -Result (Invoke-ReadOnlySsh -RemoteCommand $remoteCommand -AllowFailure)
+    $remoteScript = @'
+set -uo pipefail
+timeout_seconds="__TIMEOUT__"
+ping_count="__PING_COUNT__"
+ping_interval="__PING_INTERVAL__"
+
+getent ahostsv4 api.telegram.org | head -n 3 || true
+telegram_api_https_ok=false
+for attempt in 1 2 3; do
+  line="$(curl -4 -sS --connect-timeout 10 --max-time "$timeout_seconds" -o /dev/null -w "telegram_api_https_attempt=$attempt http_code=%{http_code} remote_ip=%{remote_ip} time_namelookup=%{time_namelookup} time_connect=%{time_connect} time_appconnect=%{time_appconnect} time_starttransfer=%{time_starttransfer} time_total=%{time_total} speed_download=%{speed_download}\n" https://api.telegram.org/ 2>&1 || true)"
+  printf '%s\n' "$line"
+  status="$(printf '%s\n' "$line" | sed -n 's/.*http_code=\([0-9][0-9][0-9]\).*/\1/p' | tail -n 1)"
+  if [ "$status" = "200" ] || [ "$status" = "302" ]; then
+    telegram_api_https_ok=true
+    break
+  fi
+  sleep 2
+done
+echo "telegram_api_https_ok=$telegram_api_https_ok"
+ping -4 -c "$ping_count" -i "$ping_interval" api.telegram.org | tail -n 4 || true
+'@
+
+    $remoteScript = $remoteScript.
+        Replace("__TIMEOUT__", "$script:DownloadTimeoutSeconds").
+        Replace("__PING_COUNT__", "$telegramPingCount").
+        Replace("__PING_INTERVAL__", "$script:PingIntervalSeconds")
+
+    Write-CommandResult -Title "Telegram API availability" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
 }
 
 function Write-GatewayJitter {
@@ -524,7 +572,9 @@ $script:Container = $Container
 $script:Interface = $Interface
 $script:SampleSeconds = $SampleSeconds
 $script:PingCount = $PingCount
+$script:PingIntervalSeconds = $PingIntervalSeconds
 $script:ConnectTimeoutSeconds = $ConnectTimeoutSeconds
+$script:SshCommandTimeoutSeconds = $SshCommandTimeoutSeconds
 $script:ResolvedKeyPath = Resolve-SshKey -ExplicitKeyPath $KeyPath
 $script:DownloadTimeoutSeconds = $DownloadTimeoutSeconds
 $script:TelegramTargetMtu = $TelegramTargetMtu
@@ -548,13 +598,14 @@ $routeText = ($routeResult.Output | Out-String)
 $gatewayMatch = [regex]::Match($routeText, "\svia\s+([0-9.]+)\s")
 if ($gatewayMatch.Success) {
     $gateway = $gatewayMatch.Groups[1].Value
-    $gatewayPingResult = Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i 0.2 $gateway" -AllowFailure
+    $gatewayPingResult = Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i $script:PingIntervalSeconds $gateway" -AllowFailure
     Write-CommandResult -Title "Ping provider gateway $gateway" -Result $gatewayPingResult
     Write-GatewayJitter -Gateway $gateway -PingResult $gatewayPingResult
 }
 
-Write-CommandResult -Title "Ping 1.1.1.1" -Result (Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i 0.2 1.1.1.1" -AllowFailure)
-Write-CommandResult -Title "Ping 8.8.8.8" -Result (Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i 0.2 8.8.8.8" -AllowFailure)
+Write-CommandResult -Title "Ping 1.1.1.1" -Result (Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i $script:PingIntervalSeconds 1.1.1.1" -AllowFailure)
+Write-CommandResult -Title "Ping 1.0.0.1" -Result (Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i $script:PingIntervalSeconds 1.0.0.1" -AllowFailure)
+Write-CommandResult -Title "Ping 8.8.8.8" -Result (Invoke-ReadOnlySsh -RemoteCommand "ping -c $PingCount -i $script:PingIntervalSeconds 8.8.8.8" -AllowFailure)
 $wgSnapshot = Get-WgSnapshot
 Write-WgSummary -Snapshot $wgSnapshot
 Write-TelegramMobileReadiness

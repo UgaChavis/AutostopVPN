@@ -54,6 +54,7 @@ Last verified from the server on 2026-06-01:
 - [open_amnezia_dashboard.ps1](open_amnezia_dashboard.ps1): PowerShell launcher for the native shell app
 - [open_amnezia_dashboard.cmd](open_amnezia_dashboard.cmd): cmd wrapper for the PowerShell launcher
 - [check_autostopvpn_network.ps1](check_autostopvpn_network.ps1): read-only outage monitor for server reachability, peer handshakes, and light traffic deltas
+- [scheduled_recovery_checks.ps1](scheduled_recovery_checks.ps1): logged local + server recovery checks for MTU, packet loss, Telegram, local download speed, and the read-only monitor
 - [audit_autostopvpn.ps1](audit_autostopvpn.ps1): read-only maintenance audit for cleanup, docs, risk markers, and tests
 - [start_autostopvpn.ps1](start_autostopvpn.ps1): stable desktop entrypoint for the installed app
 - [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut with a generated shield icon
@@ -208,6 +209,9 @@ The monitor includes Telegram-focused read-only sections:
 - `Alternate UDP endpoint`: UDP `443` forward presence, service state, DNAT counters, and confirmation that `47895/udp` remains published
 - `Peer keepalive summary`: keepalive counts and stale handshakes
 - `Telegram MSS counters`: current Telegram-specific counters and generic `awg0` MSS fallback counters inside the container
+- `Telegram API availability`: DNS resolution, HTTPS retry timing, HTTP status, and Telegram ICMP loss
+- `Ping 1.1.1.1` and `Ping 1.0.0.1`: critical Cloudflare egress/DNS path checks
+- `Ping 8.8.8.8`: non-critical Google route comparison; intermittent loss here is logged as a warning when Cloudflare and Telegram are healthy
 - `Gateway jitter`: parsed packet loss and RTT spread to the provider gateway
 
 For a small server-side download sample, opt in explicitly:
@@ -217,6 +221,17 @@ For a small server-side download sample, opt in explicitly:
 ```
 
 The monitor does not restart services, change peer configuration, or change MTU. It only reads service state, `wg show` counters, routes, pings, and the optional HTTP sample.
+
+Run a logged recovery check from the Windows desktop after a VPN stability incident:
+
+```powershell
+.\scheduled_recovery_checks.ps1 -PingCount 30 -SampleSeconds 30 -LocalDownloadBytes 10485760 -WarnLocalDownloadMbps 20 -MinLocalDownloadMbps 5
+```
+
+Logs are written under `%LOCALAPPDATA%\AutostopVPN\logs`. The local download probe uses a 10 MB Cloudflare sample with a browser user-agent, warns below 20 Mbps, and fails below 5 Mbps.
+
+Current recovery baseline: the server and `amnezia-awg2` resolver are set to Cloudflare DNS (`1.1.1.1`, `1.0.0.1`). Google DNS had much higher RTT from the VPS and occasional ICMP loss, so it is no longer treated as a critical health dependency.
+The installed Task Scheduler job uses a shorter recurring profile (`-PingCount 10`, `-SampleSeconds 5`, `-LocalDownloadBytes 5242880`) so every 15-minute health check finishes quickly; use the command above for longer manual incident checks.
 
 The stable mobile profile target for phones is:
 
