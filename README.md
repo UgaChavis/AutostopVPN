@@ -248,6 +248,7 @@ Logs are written under `%LOCALAPPDATA%\AutostopVPN\logs`. The local download pro
 
 Current recovery baseline: the server and `amnezia-awg2` resolver are set to Cloudflare DNS (`1.1.1.1`, `1.0.0.1`). Google DNS had much higher RTT from the VPS and occasional ICMP loss, so it is no longer treated as a critical health dependency.
 The installed Task Scheduler job uses a shorter recurring profile (`-PingCount 10`, `-SampleSeconds 5`, `-LocalDownloadBytes 5242880`) so every 15-minute health check finishes quickly; use the command above for longer manual incident checks.
+The daily deep-check setup runs at 08:00 Asia/Krasnoyarsk. It has two parts: a Codex thread wake-up named `AutostopVPN daily deep health check`, and a Windows Task Scheduler job named `AutostopVPN Daily Deep Check` with `-PingCount 60`, `-SampleSeconds 30`, `-DownloadBytes 52428800`, and `-LocalDownloadBytes 52428800`. The Windows job writes the same recovery logs under `%LOCALAPPDATA%\AutostopVPN\logs`; the Codex wake-up reviews those logs, reruns diagnostics, and applies safe fixes if a hard failure appears.
 
 The stable mobile profile target for phones is:
 

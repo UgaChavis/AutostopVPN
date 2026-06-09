@@ -199,6 +199,7 @@ Backups were written on the server under `/root/autostopvpn-backups/`:
 
 The scheduled recovery monitor now treats Cloudflare and Telegram packet loss as critical. `8.8.8.8` remains in the log as a non-critical Google route comparison.
 The recurring Task Scheduler job uses the shorter profile `-PingCount 10`, `-SampleSeconds 5`, and `-LocalDownloadBytes 5242880` so that the 15-minute health check finishes quickly. Longer manual incident checks can still use the README command with `-PingCount 30` and a 10 MB download probe.
+The daily deep-check workflow runs at 08:00 Asia/Krasnoyarsk. A Codex thread wake-up named `AutostopVPN daily deep health check` performs the operator review and remediation loop. A local Windows Task Scheduler job named `AutostopVPN Daily Deep Check` runs the heavy probe profile: `-PingCount 60`, `-SampleSeconds 30`, `-DownloadBytes 52428800`, and `-LocalDownloadBytes 52428800`.
 
 The latest scheduled run on 2026-06-10 at 03:17 local time completed with `LastTaskResult=0`, `Health warnings: 0`, and `Health failures: 0`. In that run:
 
