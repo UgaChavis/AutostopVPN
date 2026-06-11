@@ -44,6 +44,7 @@ There are currently no tracked Markdown delete candidates in this VPN workspace.
 3. Preserve these public contracts: `collect/report/status/doctor`, dashboard JSON shape, `%LOCALAPPDATA%\AutostopVPN`, desktop shortcut flow, systemd unit names, and `127.0.0.1:18080/dashboard.json`.
 4. Keep refresh-loop work light: geo and MTU probes must stay cached, and the shell should keep the repeated-snapshot fast path.
 5. After local verification, sync to the GitHub `autostopVPN` branch first; server mirror updates under `/opt/autostopcrm` are a separate confirmed rollout step.
+6. Keep `%LOCALAPPDATA%\AutostopVPN\logs` and `%LOCALAPPDATA%\AutostopVPN\secret-backups` across local reinstall; the installer preserves these directories because they contain recovery evidence and local registry rollback files.
 
 ## High-Risk Helpers
 
@@ -54,3 +55,7 @@ There are currently no tracked Markdown delete candidates in this VPN workspace.
 `apply_telegram_mtu_fix.ps1` changes the live VPN container MTU. Prefer `-DryRun` or `-WhatIf` first, use the shared SSH key resolver, and avoid running it during provider instability unless the MTU fix is the intended action.
 
 `apply_telegram_mss_fallback.ps1` changes live container firewall rules and the container start script. Prefer `-DryRun -NoRestart` or `-WhatIf -NoRestart` first, keep the generated `/root/autostopvpn-backups/start.sh.mss.bak.<timestamp>` path for rollback, use it only after the mobile keepalive rollout is tested, and do not treat it as part of normal read-only diagnostics.
+
+`apply_telegram_ipv6_relay_fix.ps1` changes host systemd and iptables rules for Telegram destinations on the current VPS. Prefer `-DryRun` or `-WhatIf` first, verify `Telegram IPv4 to IPv6 relay state` after apply, and use `-Rollback` to remove only the relay without touching Amnezia peers, MTU, MSS, keepalive, or UDP endpoints.
+
+`repair_local_amnezia_mtu.ps1` changes only the local Windows `AmneziaVPN` interface MTU and the persistent `AmneziaWGTunnel$AmneziaVPN` service ImagePath. It requires an elevated PowerShell session for apply or rollback, writes a registry backup under `%LOCALAPPDATA%\AutostopVPN\secret-backups`, and must never change server peers, systemd units, routes, or iptables.

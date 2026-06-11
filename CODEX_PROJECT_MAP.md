@@ -2,7 +2,7 @@
 
 This file is the project orientation sheet for Codex and maintainers.
 
-Last verified from the live server on 2026-06-01.
+Last verified from the live server on 2026-06-11.
 
 ## Canonical Locations
 
@@ -22,15 +22,18 @@ Last verified from the live server on 2026-06-01.
 - the dashboard shows a top traffic banner with load, headroom, and risk state
 - `amnezia_server_info.json`: server metadata, SSH details, bandwidth limit, notes
 - `open_amnezia_dashboard.ps1` and `open_amnezia_dashboard.cmd`: Windows shell launchers
-- `check_autostopvpn_network.ps1`: read-only outage monitor for SSH, provider loss, WireGuard handshakes, alternate UDP endpoint state, Cloudflare/Google egress comparison, Telegram mobile readiness, MSS counters, gateway jitter, and traffic deltas
-- `scheduled_recovery_checks.ps1`: logged Windows recovery check wrapper for local Amnezia MTU, Cloudflare/Telegram packet loss, non-critical Google route warnings, Telegram HTTPS, local download speed, and the server read-only monitor
+- `check_autostopvpn_network.ps1`: read-only outage monitor for SSH, provider loss, WireGuard handshakes, alternate UDP endpoint state, Cloudflare/Google egress comparison, Telegram mobile readiness, Telegram/OpenAI HTTPS availability, MSS counters, Telegram relay state, gateway jitter, and traffic deltas
+- `scheduled_recovery_checks.ps1`: logged Windows recovery check wrapper for local Amnezia MTU, Cloudflare/Telegram packet loss, non-critical Google route warnings, Telegram/OpenAI HTTPS, local download speed, and the server read-only monitor
+- `repair_local_amnezia_mtu.ps1`: elevated Windows-only helper for backing up, applying, and rolling back the local Amnezia tunnel MTU when the client returns to `1376`
 - `apply_udp443_forward.ps1`: high-risk helper for adding or rolling back the host UDP `443` DNAT forward to the existing `47895/udp` VPN listener without restarting `amnezia-awg2`
 - `apply_telegram_keepalive_fix.ps1`: high-risk helper for applying `PersistentKeepalive=25` to all peers with `-DryRun`, `-WhatIf`, and rollback support
 - `apply_telegram_mtu_fix.ps1`: high-risk helper for live `awg0` MTU changes with `-DryRun` and `-WhatIf`
 - `apply_telegram_mss_fallback.ps1`: high-risk helper for post-keepalive generic TCP MSS fallback with `-DryRun`, `-WhatIf`, `-NoRestart`, and rollback support
+- `apply_telegram_ipv6_relay_fix.ps1`: high-risk helper for the current-VPS Telegram IPv4 to IPv6 relay with `-DryRun`, `-WhatIf`, and rollback support
 - `audit_autostopvpn.ps1`: read-only maintenance audit for status, size hotspots, stale markers, hard-coded paths, ignored artifacts, and tests
-- current Telegram fallback state is server keepalive on all peers, `awg0` MTU `1280`, generic `awg0` TCP MSS `1240`, stable `47895/udp`, and alternate mobile endpoint `443/udp`
+- current Telegram fallback state is server keepalive on all peers, `awg0` MTU `1280`, generic `awg0` TCP MSS `1240`, stable `47895/udp`, alternate mobile endpoint `443/udp`, and a current-VPS Telegram IPv4 to IPv6 relay for blocked provider routes
 - current provider observation: gateway RTT is stable with `0%` packet loss in the latest read-only sample; occasional RTT spikes above `100 ms` remain a known provider pattern
+- current local Windows state: during the 2026-06-11 audit the active `AmneziaVPN` interface had returned to MTU `1376`; elevated `repair_local_amnezia_mtu.ps1` repaired the active interface and persistent service ImagePath back to `1280`
 - the shell app keeps the SSH tunnel hidden, starts server monitoring while the window is open, stops it on close, and uses a single desktop window
 - `start_autostopvpn.ps1`: stable desktop entrypoint
 - `install_autostopvpn.ps1`: local install and desktop shortcut creation
@@ -102,6 +105,7 @@ Last verified from the live server on 2026-06-01.
 - Treat `apply_udp443_forward.ps1` as a high-risk helper because it changes host NAT and installs a systemd oneshot service; run `-DryRun` or `-WhatIf` first and use `-Rollback` to remove only the UDP `443` forward.
 - Treat `apply_telegram_mtu_fix.ps1` as a high-risk helper because it changes live container MTU; run `-DryRun` or `-WhatIf` before applying.
 - Treat `apply_telegram_mss_fallback.ps1` as a high-risk helper because it changes live container firewall rules and the container start script; run `-DryRun -NoRestart` or `-WhatIf -NoRestart` before applying and keep the `start.sh.mss.bak.<timestamp>` backup path.
+- Treat `apply_telegram_ipv6_relay_fix.ps1` as a high-risk helper because it changes host systemd and iptables routing for Telegram destinations; run `-DryRun` or `-WhatIf` first and use `-Rollback` to remove only the relay.
 - Keep large refactors incremental. Preserve the dashboard JSON shape and the native shell refresh contract.
 
 ## Safe Change Rule

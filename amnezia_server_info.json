@@ -27,6 +27,9 @@
     "Основной домен CRM: crm.autostopcrm.ru.",
     "Внешние VPN endpoints: 47895/udp основной, 443/udp альтернативный для телефонов.",
     "Telegram baseline: awg0 MTU 1280, peer keepalive 25, TCP MSS 1240.",
+    "Telegram current-VPS relay: autostopvpn-telegram-relay.service redirects blocked Telegram IPv4 TCP 80/443 destinations to reachable Telegram IPv6 DC endpoints.",
+    "OpenAI health: check_autostopvpn_network.ps1 verifies api.openai.com and chatgpt.com DNS/TLS/HTTPS from the VPS.",
+    "Local Windows client MTU is checked by scheduled_recovery_checks.ps1 and repaired with repair_local_amnezia_mtu.ps1 when elevated.",
     "Gateway может давать краткие RTT spikes без packet loss; перед изменениями снимай check_autostopvpn_network.ps1."
   ]
 }

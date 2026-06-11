@@ -6,7 +6,7 @@ The files in this repository are the local working copy. The production mirror l
 
 ## Scope
 
-This documents the monitoring layer and the controlled operational helpers around the existing Amnezia/WireGuard VPN. Normal monitoring is read-only; the UDP `443`, Telegram keepalive, MTU, and MSS helpers are high-risk maintenance tools and must be run only from the documented workflow.
+This documents the monitoring layer and the controlled operational helpers around the existing Amnezia/WireGuard VPN. Normal monitoring is read-only; the UDP `443`, Telegram keepalive, MTU, MSS, and Telegram IPv4 to IPv6 relay helpers are high-risk maintenance tools and must be run only from the documented workflow.
 
 ## Current Server Layout
 
@@ -21,7 +21,7 @@ This documents the monitoring layer and the controlled operational helpers aroun
 
 ## Current Health Baseline
 
-Last verified from the server on 2026-06-01:
+Last verified from the server on 2026-06-11:
 
 - container `amnezia-awg2` is running
 - UDP `47895` is listening on IPv4 and IPv6
@@ -29,9 +29,12 @@ Last verified from the server on 2026-06-01:
 - `57` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
 - live `awg0` MTU and config MTU are both `1280`
 - generic `awg0` TCP MSS clamp is active at `1240`
-- `api.telegram.org`, `1.1.1.1`, and `8.8.8.8` show `0%` packet loss in the latest checks
+- current-VPS Telegram IPv4 to IPv6 relay is active for provider-blocked Telegram IPv4 endpoints
+- `1.1.1.1` and `8.8.8.8` show `0%` packet loss in the latest checks
+- `api.openai.com` and `chatgpt.com` pass DNS/TCP/TLS/SNI reachability through the VPN; unauthenticated OpenAI API returns HTTP `401`
 - server load, memory, bandwidth utilization, and collector warnings are normal
 - provider gateway RTT can spike above `100 ms` without packet loss; treat this as provider jitter evidence, not as a reason to restart the VPN container
+- local Windows clients must still be checked separately; on 2026-06-11 this PC's active `AmneziaVPN` interface was back at MTU `1376`, then was repaired with elevated `repair_local_amnezia_mtu.ps1` and verified at `1280`
 
 ## Why The VPN Container Is Not Updated
 
@@ -54,6 +57,7 @@ The live VPN config is stored inside the container filesystem, not on a bind-mou
 - `apply_telegram_keepalive_fix.ps1`
 - `apply_telegram_mtu_fix.ps1`
 - `apply_telegram_mss_fallback.ps1`
+- `apply_telegram_ipv6_relay_fix.ps1`
 - `tests/test_amnezia_traffic_collector.py`
 - `tests/test_amnezia_vpn_shell.py`
 - `tests/test_maintenance_artifacts.py`
@@ -107,6 +111,7 @@ Recommended order:
    - `Telegram mobile readiness` shows live `awg0` MTU and config MTU equal to `1280`.
    - `Peer keepalive summary` shows whether peers are running with keepalive off and whether handshakes go stale.
    - `Telegram MSS counters` shows whether Telegram-specific counters are present and whether the generic `awg0` MSS fallback is active and receiving traffic.
+   - `OpenAI API availability` confirms DNS, TCP, TLS/SNI, and expected unauthenticated API status for `api.openai.com` plus reachability for `chatgpt.com`.
    - `Gateway jitter` shows provider gateway packet loss and RTT spread.
 
 4. For the current private VPN rollout, keep server MTU/MSS/keepalive stable and move phones to the alternate UDP `443` endpoint. Keep existing keys, DNS, and `AllowedIPs`, and set:
@@ -154,6 +159,80 @@ If Telegram still improves but remains imperfect after the current `1280/1240` b
 - client-side `PersistentKeepalive = 15` on affected phones
 - an MTU ladder only if packet-size symptoms remain: `MTU=1200` with matching `MSS=1160`, then `MTU=1180` with `MSS=1140`
 - a Telegram-native MTProxy/SOCKS5 path if the problem is isolated to Telegram while general VPN traffic is healthy
+
+## Local Windows MTU Repair
+
+The server cannot force the local Windows tunnel MTU. If `scheduled_recovery_checks.ps1` reports the active `AmneziaVPN` IPv4/IPv6 interface at `1376`, repair only the local client from an elevated PowerShell session:
+
+```powershell
+.\repair_local_amnezia_mtu.ps1 -DryRun
+.\repair_local_amnezia_mtu.ps1 -WhatIf
+.\repair_local_amnezia_mtu.ps1
+```
+
+The helper exports `HKLM\SYSTEM\CurrentControlSet\Services\AmneziaWGTunnel$AmneziaVPN` to `%LOCALAPPDATA%\AutostopVPN\secret-backups` before changing the active interface MTU and persistent service ImagePath to `1280`. Roll back with the printed backup path:
+
+```powershell
+.\repair_local_amnezia_mtu.ps1 -Rollback -BackupPath "%LOCALAPPDATA%\AutostopVPN\secret-backups\AmneziaWGTunnel-AmneziaVPN-YYYYMMDD-HHMMSS.reg"
+```
+
+This helper does not SSH to the server and does not change peers, `amnezia-awg2`, server MTU/MSS, routes, iptables, or systemd.
+
+## Telegram IPv4 To IPv6 Relay
+
+Use the current-VPS relay when general internet through the VPN is healthy, the VPS can reach Telegram IPv6, and specific Telegram IPv4 destinations time out from the provider route. This is the active repair for the June 2026 Telegram outage on this VPS.
+
+The relay installs:
+
+- systemd service: `autostopvpn-telegram-relay.service`
+- host script: `/usr/local/sbin/autostopvpn-telegram-relay.py`
+- host rules script: `/usr/local/sbin/autostopvpn-telegram-relay-rules.sh`
+- iptables chain: `AUTOSTOPVPN_TG_RELAY`
+- narrow INPUT allow: `amn0` from `172.29.172.2/32` to local TCP `10443`
+
+It redirects only known broken Telegram IPv4 TCP `80/443` destinations to reachable Telegram IPv6 DC endpoints. It does not restart `amnezia-awg2`, edit peers, change MTU, change MSS, or change client profiles.
+
+Preview, apply, and rollback:
+
+```powershell
+.\apply_telegram_ipv6_relay_fix.ps1 -DryRun
+.\apply_telegram_ipv6_relay_fix.ps1 -WhatIf
+.\apply_telegram_ipv6_relay_fix.ps1
+.\apply_telegram_ipv6_relay_fix.ps1 -Rollback
+```
+
+Verify after applying:
+
+```powershell
+.\check_autostopvpn_network.ps1 -PingCount 30 -SampleSeconds 30
+```
+
+Expected signals:
+
+- `Telegram IPv4 to IPv6 relay state` shows `telegram_relay_service_active=active`
+- relay NAT counters increase for blocked Telegram IPv4 destinations
+- `curl -4 --resolve api.telegram.org:443:149.154.166.110 https://api.telegram.org/` succeeds through the VPN
+- Telegram Desktop has `Established` connections instead of only `SynSent`
+- ordinary internet checks remain healthy
+
+## OpenAI Service Checks
+
+OpenAI and ChatGPT checks belong in the read-only network monitor and scheduled recovery checks, not in the 1-second dashboard collector loop. The collector should stay light while the desktop shell is open.
+
+Use:
+
+```powershell
+.\check_autostopvpn_network.ps1 -PingCount 30 -SampleSeconds 30
+```
+
+Expected signals:
+
+- `OpenAI API availability` shows `openai_api_https_ok=true`
+- `chatgpt_https_reachable=true`
+- `api.openai.com/v1/models` returns an expected unauthenticated HTTPS response such as HTTP `401`
+- `chatgpt.com` may return HTTP `403` from Cloudflare, which still confirms DNS, TCP, TLS/SNI, and egress reachability
+
+If OpenAI fails while Telegram and Cloudflare checks are healthy, do not change MTU/MSS first. Re-check DNS resolution, SNI/TLS timing, Cloudflare HTTP status, and whether the local client is still routed through `AmneziaVPN`.
 
 ## UDP 443 Alternate Endpoint
 

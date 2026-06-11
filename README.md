@@ -17,7 +17,7 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 
 ## Current Production Baseline
 
-Last verified from the server on 2026-06-01:
+Last verified from the server on 2026-06-11:
 
 - VPN container `amnezia-awg2` is running and listens on UDP `47895`
 - alternate mobile endpoint UDP `443` is forwarded on the host to the existing `47895/udp` listener without restarting the VPN container
@@ -25,8 +25,12 @@ Last verified from the server on 2026-06-01:
 - peer config has `57` peers, all with server-side `PersistentKeepalive=25`
 - live `awg0` MTU and config MTU are `1280`
 - generic `awg0` TCP MSS is clamped to `1240`
+- Telegram IPv4 to IPv6 relay is active on the current VPS for provider-blocked Telegram IPv4 endpoints
+- Telegram API and Web HTTPS work through the VPN; the read-only monitor retries Telegram HTTPS because a first attempt can fail transiently
+- OpenAI HTTPS works through the VPN: unauthenticated `api.openai.com/v1/models` returns the expected HTTP `401`, and `chatgpt.com` reaches Cloudflare
 - current channel utilization is well below the 1 Gbps configured limit
-- recurring provider-gateway jitter spikes can appear without packet loss; collect `check_autostopvpn_network.ps1` output before changing runtime settings
+- recurring provider-gateway jitter spikes can appear without packet loss; the latest long sample had `0%` packet loss with gateway RTT spikes up to about `252 ms`
+- local Windows client MTU was found at `1376` during the 2026-06-11 audit and repaired with `repair_local_amnezia_mtu.ps1`; the active IPv4/IPv6 interface and persistent tunnel service now show `MTU=1280`
 
 ## What This Project Does
 
@@ -54,7 +58,8 @@ Last verified from the server on 2026-06-01:
 - [open_amnezia_dashboard.ps1](open_amnezia_dashboard.ps1): PowerShell launcher for the native shell app
 - [open_amnezia_dashboard.cmd](open_amnezia_dashboard.cmd): cmd wrapper for the PowerShell launcher
 - [check_autostopvpn_network.ps1](check_autostopvpn_network.ps1): read-only outage monitor for server reachability, peer handshakes, and light traffic deltas
-- [scheduled_recovery_checks.ps1](scheduled_recovery_checks.ps1): logged local + server recovery checks for MTU, packet loss, Telegram, local download speed, and the read-only monitor
+- [scheduled_recovery_checks.ps1](scheduled_recovery_checks.ps1): logged local + server recovery checks for MTU, packet loss, Telegram/OpenAI HTTPS, local download speed, and the read-only monitor
+- [repair_local_amnezia_mtu.ps1](repair_local_amnezia_mtu.ps1): elevated local helper for backing up, applying, and rolling back the Windows Amnezia tunnel MTU
 - [audit_autostopvpn.ps1](audit_autostopvpn.ps1): read-only maintenance audit for cleanup, docs, risk markers, and tests
 - [start_autostopvpn.ps1](start_autostopvpn.ps1): stable desktop entrypoint for the installed app
 - [install_autostopvpn.ps1](install_autostopvpn.ps1): copy the project to `%LOCALAPPDATA%\AutostopVPN` and create a desktop shortcut with a generated shield icon
@@ -63,6 +68,7 @@ Last verified from the server on 2026-06-01:
 - [apply_telegram_keepalive_fix.ps1](apply_telegram_keepalive_fix.ps1): high-risk keepalive helper for all mobile peers with `-DryRun`, `-WhatIf`, and rollback support
 - [apply_telegram_mtu_fix.ps1](apply_telegram_mtu_fix.ps1): high-risk MTU helper with `-DryRun` and `-WhatIf` support
 - [apply_telegram_mss_fallback.ps1](apply_telegram_mss_fallback.ps1): high-risk Telegram MSS fallback helper with `-DryRun`, `-WhatIf`, `-NoRestart`, and rollback support
+- [apply_telegram_ipv6_relay_fix.ps1](apply_telegram_ipv6_relay_fix.ps1): high-risk current-VPS Telegram IPv4 to IPv6 relay helper with `-DryRun`, `-WhatIf`, and rollback support
 - [LOCAL_INSTALL.md](LOCAL_INSTALL.md): local install and shortcut instructions
 - [AMNEZIA_VPN_MONITORING.md](AMNEZIA_VPN_MONITORING.md): deployment and rollback runbook
 - [MAINTENANCE.md](MAINTENANCE.md): cleanup, optimization, and staged-sync checklist
@@ -226,8 +232,10 @@ The monitor includes Telegram-focused read-only sections:
 - `Peer keepalive summary`: keepalive counts and stale handshakes
 - `Telegram MSS counters`: current Telegram-specific counters and generic `awg0` MSS fallback counters inside the container
 - `Telegram API availability`: DNS resolution, HTTPS retry timing, HTTP status, and Telegram ICMP loss
+- `OpenAI API availability`: DNS and HTTPS/SNI timing for `api.openai.com` and `chatgpt.com`
 - `Ping 1.1.1.1` and `Ping 1.0.0.1`: critical Cloudflare egress/DNS path checks
 - `Ping 8.8.8.8`: non-critical Google route comparison; intermittent loss here is logged as a warning when Cloudflare and Telegram are healthy
+- `Telegram IPv4 to IPv6 relay state`: current-VPS relay service, rules, counters, and warning log state
 - `Gateway jitter`: parsed packet loss and RTT spread to the provider gateway
 
 For a small server-side download sample, opt in explicitly:
@@ -249,6 +257,15 @@ Logs are written under `%LOCALAPPDATA%\AutostopVPN\logs`. The local download pro
 Current recovery baseline: the server and `amnezia-awg2` resolver are set to Cloudflare DNS (`1.1.1.1`, `1.0.0.1`). Google DNS had much higher RTT from the VPS and occasional ICMP loss, so it is no longer treated as a critical health dependency.
 The installed Task Scheduler job uses a shorter recurring profile (`-PingCount 10`, `-SampleSeconds 5`, `-LocalDownloadBytes 5242880`) so every 15-minute health check finishes quickly; use the command above for longer manual incident checks.
 The daily deep-check setup runs at 08:00 Asia/Krasnoyarsk. It has two parts: a Codex thread wake-up named `AutostopVPN daily deep health check`, and a Windows Task Scheduler job named `AutostopVPN Daily Deep Check` with `-PingCount 60`, `-SampleSeconds 30`, `-DownloadBytes 52428800`, and `-LocalDownloadBytes 52428800`. The Windows job writes the same recovery logs under `%LOCALAPPDATA%\AutostopVPN\logs`; the Codex wake-up reviews those logs, reruns diagnostics, and applies safe fixes if a hard failure appears.
+
+If the scheduled check reports active local `AmneziaVPN` MTU `1376`, repair only the local Windows client from an elevated PowerShell session. This backs up the secret-bearing tunnel service registry key under `%LOCALAPPDATA%\AutostopVPN\secret-backups` before changing the active IPv4/IPv6 interface MTU and persistent service ImagePath:
+
+```powershell
+.\repair_local_amnezia_mtu.ps1 -DryRun
+.\repair_local_amnezia_mtu.ps1 -WhatIf
+.\repair_local_amnezia_mtu.ps1
+.\repair_local_amnezia_mtu.ps1 -Rollback -BackupPath "%LOCALAPPDATA%\AutostopVPN\secret-backups\AmneziaWGTunnel-AmneziaVPN-YYYYMMDD-HHMMSS.reg"
+```
 
 The stable mobile profile target for phones is:
 
@@ -291,6 +308,17 @@ The Telegram MSS fallback helper changes live container firewall rules and the c
 .\apply_telegram_mss_fallback.ps1 -NoRestart
 .\apply_telegram_mss_fallback.ps1 -RollbackBackupPath /root/autostopvpn-backups/start.sh.mss.bak.YYYYMMDD-HHMMSS -NoRestart
 ```
+
+The Telegram IPv4 to IPv6 relay helper is the current provider-route repair for Telegram on this VPS. It does not change Amnezia peer profiles, MTU, MSS, keepalive, or the VPN listener. It installs a host systemd service and narrow iptables rules that redirect only known broken Telegram IPv4 TCP `80/443` destinations from the VPN container and local VPS traffic to reachable Telegram IPv6 DC endpoints:
+
+```powershell
+.\apply_telegram_ipv6_relay_fix.ps1 -DryRun
+.\apply_telegram_ipv6_relay_fix.ps1 -WhatIf
+.\apply_telegram_ipv6_relay_fix.ps1
+.\apply_telegram_ipv6_relay_fix.ps1 -Rollback
+```
+
+Rollback removes `autostopvpn-telegram-relay.service`, `/usr/local/sbin/autostopvpn-telegram-relay.py`, `/usr/local/sbin/autostopvpn-telegram-relay-rules.sh`, and the dedicated relay iptables rules only.
 
 ## Working Model
 

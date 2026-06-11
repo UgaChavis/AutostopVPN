@@ -133,6 +133,8 @@ function Assert-ServerMonitorHealthy {
     Assert-TextContains -Text $text -Pattern "generic_awg0_mss_in=1" -Reason "Inbound generic MSS clamp is not confirmed."
     Assert-TextContains -Text $text -Pattern "generic_awg0_mss_out=1" -Reason "Outbound generic MSS clamp is not confirmed."
     Assert-TextContains -Text $text -Pattern "telegram_api_https_ok=true" -Reason "Server Telegram API HTTPS did not pass after retries."
+    Assert-TextContains -Text $text -Pattern "openai_api_https_ok=true" -Reason "Server OpenAI API HTTPS did not pass after retries."
+    Assert-TextContains -Text $text -Pattern "chatgpt_https_reachable=true" -Reason "Server ChatGPT HTTPS reachability was not confirmed."
     if ($text -match "jitter_warning=true") {
         Add-HealthWarning "Provider gateway jitter warning is active; no hard failure without packet loss."
     }
@@ -174,6 +176,25 @@ function Invoke-TelegramHttpsProbe {
     }
 
     Assert-TextContains -Text ($lastOutput | Out-String) -Pattern "telegram_https attempt=3 http=(200|302)" -Reason "Telegram HTTPS did not return HTTP 200 or 302 after 3 attempts."
+}
+
+function Invoke-OpenAiHttpsProbe {
+    $lastOutput = @()
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $output = @(curl.exe -4 -sS --connect-timeout 10 --max-time 15 -o NUL -w "openai_api_https attempt=$attempt http=%{http_code} ip=%{remote_ip} namelookup=%{time_namelookup} connect=%{time_connect} tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total}`n" "https://api.openai.com/v1/models" 2>&1)
+        $output
+        $lastOutput = $output
+        if (($output | Out-String) -match "openai_api_https attempt=$attempt http=(200|401|403)") {
+            break
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    Assert-TextContains -Text ($lastOutput | Out-String) -Pattern "openai_api_https attempt=\d+ http=(200|401|403)" -Reason "OpenAI API HTTPS did not return HTTP 200, 401, or 403 after retries."
+
+    $chatgptOutput = @(curl.exe -4 -sS --connect-timeout 10 --max-time 15 -o NUL -w "chatgpt_https http=%{http_code} ip=%{remote_ip} namelookup=%{time_namelookup} connect=%{time_connect} tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total}`n" "https://chatgpt.com/" 2>&1)
+    $chatgptOutput
+    Assert-TextContains -Text ($chatgptOutput | Out-String) -Pattern "chatgpt_https http=(200|301|302|403)" -Reason "ChatGPT HTTPS reachability was not confirmed."
 }
 
 function Invoke-LocalDownloadProbe {
@@ -297,6 +318,10 @@ try {
 
     Invoke-LoggedCommand -Title "Local Telegram HTTPS" -Command {
         Invoke-TelegramHttpsProbe
+    }
+
+    Invoke-LoggedCommand -Title "Local OpenAI HTTPS" -Command {
+        Invoke-OpenAiHttpsProbe
     }
 
     Invoke-LoggedCommand -Title "Local VPN download" -Command {

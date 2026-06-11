@@ -450,6 +450,67 @@ ping -4 -c "$ping_count" -i "$ping_interval" api.telegram.org | tail -n 4 || tru
     Write-CommandResult -Title "Telegram API availability" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
 }
 
+function Write-OpenAiAvailability {
+    $remoteScript = @'
+set -uo pipefail
+timeout_seconds="__TIMEOUT__"
+
+for host in chatgpt.com api.openai.com platform.openai.com auth.openai.com; do
+  echo "openai_dns_host=$host"
+  getent ahostsv4 "$host" | head -n 4 || true
+done
+
+openai_api_https_ok=false
+for attempt in 1 2 3; do
+  line="$(curl -4 -sS --connect-timeout 10 --max-time "$timeout_seconds" -o /dev/null -w "openai_api_https_attempt=$attempt http_code=%{http_code} remote_ip=%{remote_ip} time_namelookup=%{time_namelookup} time_connect=%{time_connect} time_appconnect=%{time_appconnect} time_starttransfer=%{time_starttransfer} time_total=%{time_total}\n" https://api.openai.com/v1/models 2>&1 || true)"
+  printf '%s\n' "$line"
+  status="$(printf '%s\n' "$line" | sed -n 's/.*http_code=\([0-9][0-9][0-9]\).*/\1/p' | tail -n 1)"
+  if [ "$status" = "200" ] || [ "$status" = "401" ] || [ "$status" = "403" ]; then
+    openai_api_https_ok=true
+    break
+  fi
+  sleep 2
+done
+echo "openai_api_https_ok=$openai_api_https_ok"
+
+chatgpt_https_reachable=false
+line="$(curl -4 -sS --connect-timeout 10 --max-time "$timeout_seconds" -o /dev/null -w "chatgpt_https http_code=%{http_code} remote_ip=%{remote_ip} time_namelookup=%{time_namelookup} time_connect=%{time_connect} time_appconnect=%{time_appconnect} time_starttransfer=%{time_starttransfer} time_total=%{time_total}\n" https://chatgpt.com/ 2>&1 || true)"
+printf '%s\n' "$line"
+status="$(printf '%s\n' "$line" | sed -n 's/.*http_code=\([0-9][0-9][0-9]\).*/\1/p' | tail -n 1)"
+if [ "$status" = "200" ] || [ "$status" = "301" ] || [ "$status" = "302" ] || [ "$status" = "403" ]; then
+  chatgpt_https_reachable=true
+fi
+echo "chatgpt_https_reachable=$chatgpt_https_reachable"
+'@
+
+    $remoteScript = $remoteScript.Replace("__TIMEOUT__", "$script:DownloadTimeoutSeconds")
+    Write-CommandResult -Title "OpenAI API availability" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
+}
+
+function Write-TelegramRelayState {
+    $remoteScript = @'
+set -uo pipefail
+service_name="autostopvpn-telegram-relay.service"
+chain="AUTOSTOPVPN_TG_RELAY"
+relay_port="10443"
+
+echo "telegram_relay_service_active=$(systemctl is-active "$service_name" 2>/dev/null || true)"
+echo "telegram_relay_service_enabled=$(systemctl is-enabled "$service_name" 2>/dev/null || true)"
+echo "telegram_relay_script_present=$([ -x /usr/local/sbin/autostopvpn-telegram-relay.py ] && echo true || echo false)"
+echo "telegram_relay_rules_present=$([ -x /usr/local/sbin/autostopvpn-telegram-relay-rules.sh ] && echo true || echo false)"
+
+iptables -S INPUT 2>/dev/null | grep -F -- "--dport $relay_port" | sed 's/^/relay_input_rule=/' || true
+iptables -t nat -S PREROUTING 2>/dev/null | grep -F "$chain" | sed 's/^/relay_prerouting_rule=/' || true
+iptables -t nat -S OUTPUT 2>/dev/null | grep -F "$chain" | sed 's/^/relay_output_rule=/' || true
+iptables -t nat -S "$chain" 2>/dev/null | sed 's/^/relay_nat_rule=/' || true
+iptables -t nat -L "$chain" -n -v --line-numbers 2>/dev/null | sed 's/^/relay_nat_counter=/' || true
+journalctl -u "$service_name" --no-pager -p warning -n 5 2>/dev/null | sed 's/^/relay_warning=/' || true
+exit 0
+'@
+
+    Write-CommandResult -Title "Telegram IPv4 to IPv6 relay state" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
+}
+
 function Write-GatewayJitter {
     param(
         [string]$Gateway,
@@ -612,6 +673,8 @@ Write-TelegramMobileReadiness
 Write-PeerKeepaliveSummary -Snapshot $wgSnapshot
 Write-TelegramMssCounters
 Write-TelegramApiAvailability
+Write-OpenAiAvailability
+Write-TelegramRelayState
 Write-TrafficDelta
 
 if ($DownloadBytes -gt 0) {

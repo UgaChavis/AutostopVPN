@@ -171,6 +171,9 @@ If someone asks “what is happening when I click Connect in Amnezia?”, the sh
 - [`amnezia-traffic-collector.service`](amnezia-traffic-collector.service)
 - [`amnezia-traffic-collector.timer`](amnezia-traffic-collector.timer)
 - [`amnezia-dashboard.service`](amnezia-dashboard.service)
+- [`check_autostopvpn_network.ps1`](check_autostopvpn_network.ps1)
+- [`scheduled_recovery_checks.ps1`](scheduled_recovery_checks.ps1)
+- [`repair_local_amnezia_mtu.ps1`](repair_local_amnezia_mtu.ps1)
 
 ## 12. 2026-06-10 Stability Recovery Notes
 
@@ -213,7 +216,28 @@ The latest scheduled run on 2026-06-10 at 03:17 local time completed with `LastT
 - server `8.8.8.8`: `10/10`, `0%` loss
 - server Telegram API: `telegram_api_https_ok=true`
 
-## 13. Client Rollout Impact
+## 13. 2026-06-11 Audit Update
+
+The server was rechecked read-only on 2026-06-11 after a recent reboot. The target runtime remains stable:
+
+- `amnezia-awg2` running, public UDP `47895` published
+- UDP `443` DNAT active and forwarding to the existing container listener
+- monitoring services inactive until the desktop shell opens
+- `57` peers configured
+- server-side `PersistentKeepalive=25` on all peers
+- live/config `awg0 MTU=1280`
+- generic `awg0` TCP MSS clamp `1240`
+- Telegram IPv4 to IPv6 relay service active
+- Cloudflare, Google comparison, Telegram API, and OpenAI API checks showed `0%` packet loss or expected HTTPS status in the sampled checks
+- `api.openai.com/v1/models` returned the expected unauthenticated HTTP `401`; `chatgpt.com` reached Cloudflare with HTTP `403`
+
+The server still shows provider-gateway jitter without packet loss. In the long sample, gateway RTT reached about `252 ms` while packet loss stayed at `0%`. This is evidence to avoid server restarts or repeated MTU/MSS changes when the data path is otherwise healthy.
+
+The local Windows client was the remaining outlier. On 2026-06-11 the active `AmneziaVPN` IPv4/IPv6 interface and persistent tunnel service were again at `MTU=1376`, while the target profile is `1280`. The unelevated Codex process first created a registry backup and proved the issue; after UAC elevation, `repair_local_amnezia_mtu.ps1` applied the active IPv4/IPv6 MTU and persistent service ImagePath change. The post-repair scheduled recovery run completed with `Health warnings: 0` and `Health failures: 0`.
+
+Do not remove the Telegram relay or UDP `443` endpoint yet. The public Amnezia incident update says the infrastructure fix found on 2026-06-08 was still being rolled out over several days, and this server's relay counters are still increasing. A valid A/B removal test needs an elevated/local MTU repair first, a fresh passing baseline, a documented rollback, and a low-traffic maintenance window.
+
+## 14. Client Rollout Impact
 
 The live server state confirms that the server-side changes are already active for all peers that connect:
 
@@ -253,6 +277,7 @@ Recurring short recovery checks are logged under `%LOCALAPPDATA%\AutostopVPN\log
 ## 14. Official References
 
 - [AmneziaWG docs](https://docs.amnezia.org/ru/documentation/amnezia-wg/)
+- [Amnezia May-June 2026 incident summary](https://amnezia.org/ru/blog/amnezia-vpn-may-june-2026-incident-preliminary-summary)
 - [How Amnezia works](https://docs.amnezia.org/documentation/how-amnezia-works/)
 - [WireGuard protocol](https://www.wireguard.com/protocol/)
 - [WireGuard quick start](https://www.wireguard.com/quickstart/)

@@ -29,6 +29,44 @@ function Copy-ProjectTree {
     }
 }
 
+function Backup-LocalInstallState {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $InstallRoot)) {
+        return ""
+    }
+
+    $preserveNames = @("logs", "secret-backups")
+    $existing = @($preserveNames | Where-Object { Test-Path -LiteralPath (Join-Path $InstallRoot $_) })
+    if (-not $existing) {
+        return ""
+    }
+
+    $backupRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("AutostopVPN-install-preserve-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+    foreach ($name in $existing) {
+        Copy-Item -LiteralPath (Join-Path $InstallRoot $name) -Destination (Join-Path $backupRoot $name) -Recurse -Force
+    }
+    return $backupRoot
+}
+
+function Restore-LocalInstallState {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallRoot,
+        [string]$BackupRoot
+    )
+
+    if (-not $BackupRoot -or -not (Test-Path -LiteralPath $BackupRoot)) {
+        return
+    }
+
+    Get-ChildItem -LiteralPath $BackupRoot -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $InstallRoot $_.Name) -Recurse -Force
+    }
+}
+
 function New-ShortcutIcon {
     param(
         [Parameter(Mandatory = $true)][string]$IconPath
@@ -210,6 +248,7 @@ if ($sourceRoot -eq $installRoot) {
     throw "Run the installer from the source repository, not from the installed copy."
 }
 
+$preservedInstallState = Backup-LocalInstallState -InstallRoot $installRoot
 if (Test-Path $installRoot) {
     Stop-RunningAutostopVpn -InstallRoot $installRoot
     Wait-ForAutostopVpnShutdown -InstallRoot $installRoot
@@ -227,6 +266,7 @@ if (Test-Path $installRoot) {
 }
 New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
 Copy-ProjectTree -SourceRoot $sourceRoot -DestinationRoot $installRoot
+Restore-LocalInstallState -InstallRoot $installRoot -BackupRoot $preservedInstallState
 
     $desktop = [Environment]::GetFolderPath("Desktop")
     $shortcutPath = Join-Path $desktop "Autostop VPN.lnk"
