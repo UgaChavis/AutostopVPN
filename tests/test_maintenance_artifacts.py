@@ -471,6 +471,10 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertIn("mode=apply", output)
         self.assertIn("Apply Telegram IPv4 to IPv6 relay", output)
         self.assertIn("no_amnezia_restart=true", output)
+        text = (ROOT / "apply_telegram_ipv6_relay_fix.ps1").read_text(encoding="utf-8")
+        self.assertIn("CONNECT_ATTEMPTS = 3", text)
+        self.assertIn("connect_upstream", text)
+        self.assertIn("connect failed after", text)
 
     def test_keepalive_helper_has_safety_guards_and_rollback(self) -> None:
         text = (ROOT / "apply_telegram_keepalive_fix.ps1").read_text(encoding="utf-8")

@@ -259,6 +259,7 @@ The server was rechecked read-only on 2026-06-19. The current runtime differs fr
 - owner/full-access recovery on 2026-06-19 added peer `10.8.1.69/32`; `apply_telegram_keepalive_fix.ps1` then normalized all peers to `PersistentKeepalive=25` and wrote backup `/root/autostopvpn-backups/awg0.conf.keepalive.bak.20260619-173830`
 - a later duplicate-card/local recovery check found a new peer `10.8.1.70/32` without keepalive; the keepalive helper was rerun and wrote backup `/root/autostopvpn-backups/awg0.conf.keepalive.bak.20260619-175622`, after which `keepalive_off=0`
 - a subsequent Telegram-focused check found new peer `10.8.1.71/32` without keepalive; the keepalive helper was rerun and wrote backup `/root/autostopvpn-backups/awg0.conf.keepalive.bak.20260619-192232`, after which `68/68` peers had `PersistentKeepalive=25`
+- the Telegram relay was updated to retry upstream IPv6 DC connects up to three times before failing; post-change Telegram probes passed for `api.telegram.org`, `t.me`, and `web.telegram.org`, with one recovered connection logged on attempt `2/3`
 
 ## 15. Client Rollout Impact
 

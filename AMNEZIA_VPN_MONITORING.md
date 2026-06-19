@@ -193,7 +193,7 @@ The relay installs:
 - iptables chain: `AUTOSTOPVPN_TG_RELAY`
 - narrow INPUT allow: `amn0` from `172.29.172.2/32` to local TCP `10443`
 
-It redirects only known broken Telegram IPv4 TCP `80/443` destinations to reachable Telegram IPv6 DC endpoints. It does not restart `amnezia-awg2`, edit peers, change MTU, change MSS, or change client profiles.
+It redirects only known broken Telegram IPv4 TCP `80/443` destinations to reachable Telegram IPv6 DC endpoints. It uses three short upstream connect attempts before failing a Telegram TCP connection, which reduces transient Telegram web/media TLS stalls when the first IPv6 DC connect times out. It does not restart `amnezia-awg2`, edit peers, change MTU, change MSS, or change client profiles.
 
 Preview, apply, and rollback:
 

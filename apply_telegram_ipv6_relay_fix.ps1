@@ -143,7 +143,8 @@ SO_ORIGINAL_DST = 80
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = __RELAY_PORT__
 BUFFER_SIZE = 65536
-CONNECT_TIMEOUT = 8
+CONNECT_TIMEOUT = 4
+CONNECT_ATTEMPTS = 3
 IDLE_TIMEOUT = 180
 
 IPV4_TO_IPV6 = {
@@ -181,6 +182,38 @@ def copy_stream(src, dst, label):
             except OSError:
                 pass
 
+def connect_upstream(original_ip, original_port, target_ip):
+    last_error = None
+    for attempt in range(1, CONNECT_ATTEMPTS + 1):
+        try:
+            upstream = socket.create_connection((target_ip, original_port), timeout=CONNECT_TIMEOUT)
+            upstream.settimeout(IDLE_TIMEOUT)
+            if attempt > 1:
+                logging.info(
+                    "connect recovered %s:%s -> [%s]:%s attempt=%s/%s",
+                    original_ip,
+                    original_port,
+                    target_ip,
+                    original_port,
+                    attempt,
+                    CONNECT_ATTEMPTS,
+                )
+            return upstream
+        except OSError as exc:
+            last_error = exc
+            logging.debug(
+                "connect attempt failed %s:%s -> [%s]:%s attempt=%s/%s: %s",
+                original_ip,
+                original_port,
+                target_ip,
+                original_port,
+                attempt,
+                CONNECT_ATTEMPTS,
+                exc,
+            )
+            time.sleep(0.2 * attempt)
+    raise last_error
+
 class RelayHandler(socketserver.BaseRequestHandler):
     def handle(self):
         client = self.request
@@ -196,10 +229,9 @@ class RelayHandler(socketserver.BaseRequestHandler):
             return
         started = time.monotonic()
         try:
-            upstream = socket.create_connection((target_ip, original_port), timeout=CONNECT_TIMEOUT)
-            upstream.settimeout(IDLE_TIMEOUT)
+            upstream = connect_upstream(original_ip, original_port, target_ip)
         except OSError as exc:
-            logging.warning("connect failed %s:%s -> [%s]:%s: %s", original_ip, original_port, target_ip, original_port, exc)
+            logging.warning("connect failed after %s attempts %s:%s -> [%s]:%s: %s", CONNECT_ATTEMPTS, original_ip, original_port, target_ip, original_port, exc)
             return
         logging.debug("relay %s:%s -> [%s]:%s client=%s", original_ip, original_port, target_ip, original_port, self.client_address[0])
         try:

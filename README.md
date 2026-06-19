@@ -315,6 +315,8 @@ The Telegram MSS fallback helper changes live container firewall rules and the c
 
 The Telegram IPv4 to IPv6 relay helper is the current provider-route repair for Telegram on this VPS. It does not change Amnezia peer profiles, MTU, MSS, keepalive, or the VPN listener. It installs a host systemd service and narrow iptables rules that redirect only known broken Telegram IPv4 TCP `80/443` destinations from the VPN container and local VPS traffic to reachable Telegram IPv6 DC endpoints:
 
+The relay uses three short upstream connect attempts before failing a Telegram TCP connection. This reduces short Telegram web/media TLS stalls seen when the first IPv6 DC connect times out.
+
 ```powershell
 .\apply_telegram_ipv6_relay_fix.ps1 -DryRun
 .\apply_telegram_ipv6_relay_fix.ps1 -WhatIf
