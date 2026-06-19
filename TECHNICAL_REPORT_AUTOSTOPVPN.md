@@ -241,8 +241,8 @@ Do not remove the Telegram relay or UDP `443` endpoint yet. The public Amnezia i
 
 The server was rechecked read-only on 2026-06-19. The current runtime differs from the older 2026-06-11 inventory:
 
-- `67` peers configured
-- `67` peers with server-side `PersistentKeepalive=25`
+- `68` peers configured
+- `68` peers with server-side `PersistentKeepalive=25`
 - `28` active peers in the latest 180 second collector sample
 - `33` active peers within 600 seconds in the read-only monitor sample
 - `15` never-handshaked peers in the latest read-only monitor sample
@@ -258,22 +258,23 @@ The server was rechecked read-only on 2026-06-19. The current runtime differs fr
 - no Windows Task Scheduler jobs matching `Autostop` or `VPN` were registered on this workstation; run recovery checks manually until recurring jobs are recreated
 - owner/full-access recovery on 2026-06-19 added peer `10.8.1.69/32`; `apply_telegram_keepalive_fix.ps1` then normalized all peers to `PersistentKeepalive=25` and wrote backup `/root/autostopvpn-backups/awg0.conf.keepalive.bak.20260619-173830`
 - a later duplicate-card/local recovery check found a new peer `10.8.1.70/32` without keepalive; the keepalive helper was rerun and wrote backup `/root/autostopvpn-backups/awg0.conf.keepalive.bak.20260619-175622`, after which `keepalive_off=0`
+- a subsequent Telegram-focused check found new peer `10.8.1.71/32` without keepalive; the keepalive helper was rerun and wrote backup `/root/autostopvpn-backups/awg0.conf.keepalive.bak.20260619-192232`, after which `68/68` peers had `PersistentKeepalive=25`
 
 ## 15. Client Rollout Impact
 
 The live server state confirms that the server-side changes are already active for all peers that connect:
 
-- total peers: `67`
+- total peers: `68`
 - active within 180 seconds in the latest sample: `28`
 - active within 600 seconds in the latest read-only monitor sample: `33`
 - never-handshaked peers in the latest read-only monitor sample: `15`
-- server-side `PersistentKeepalive=25`: `67`
+- server-side `PersistentKeepalive=25`: `68`
 - server-side `PersistentKeepalive=0`: `0`
 - live/config `awg0 MTU`: `1280`
 - generic TCP MSS clamp rules: `2`
 - UDP `443` forward: active
 
-The 2026-06-19 collector status sample showed channel flow around `797.79 KiB/s`, utilization around `0.65%` of the configured 1 Gbps limit, and collector warnings `0`. A separate 5 second read-only traffic delta saw about `1.37 MiB/s` and `47` peers with traffic movement.
+The 2026-06-19 collector status sample showed channel flow around `1.12 MiB/s`, utilization around `0.94%` of the configured 1 Gbps limit, and collector warnings `0`. A separate 10 second read-only traffic delta saw about `2.05 MiB/s` and `48` peers with traffic movement.
 
 These server-side settings protect the shared VPN path and do not require a new key or server restart. Existing clients on `46.8.254.243:47895` continue to work because `47895/udp` remains published.
 

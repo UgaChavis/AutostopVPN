@@ -55,8 +55,8 @@ Verified on 2026-06-19:
 - `amnezia-awg2` is running and has been up for about 8 days.
 - UDP `47895` is published and listening.
 - UDP `443` DNAT is active and forwards to the existing `47895/udp` listener.
-- `67` peers are configured; `67` have server-side `PersistentKeepalive=25`.
-- Latest collector status sample: `28` active peers in the 180 second window, channel flow about `797.79 KiB/s`, utilization about `0.65%` of the configured 1 Gbps limit, collector warnings `0`.
+- `68` peers are configured; `68` have server-side `PersistentKeepalive=25`.
+- Latest collector status sample: `28` active peers in the 180 second window, channel flow about `1.12 MiB/s`, utilization about `0.94%` of the configured 1 Gbps limit, collector warnings `0`.
 - Live/config `awg0` MTU is `1280`; generic TCP MSS clamp is `1240`.
 - Telegram and OpenAI HTTPS checks pass; critical packet loss is `0%`.
 - Provider gateway jitter can appear without packet loss and should not trigger VPN container restarts by itself.

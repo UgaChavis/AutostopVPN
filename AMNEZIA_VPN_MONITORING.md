@@ -27,13 +27,13 @@ Last verified from the server on 2026-06-19:
 - container `amnezia-awg2` is running
 - UDP `47895` is listening on IPv4 and IPv6
 - UDP `443` is reserved as the alternate mobile endpoint and forwards to the existing `47895/udp` listener without restarting `amnezia-awg2`
-- `67` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
+- `68` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
 - live `awg0` MTU and config MTU are both `1280`
 - generic `awg0` TCP MSS clamp is active at `1240`
 - current-VPS Telegram IPv4 to IPv6 relay is active for provider-blocked Telegram IPv4 endpoints
 - `1.1.1.1`, `1.0.0.1`, `8.8.8.8`, and Telegram API show `0%` packet loss in the latest checks
 - `api.openai.com` and `chatgpt.com` pass DNS/TCP/TLS/SNI reachability through the VPN; unauthenticated OpenAI API returns HTTP `401`
-- server load, memory, bandwidth utilization, and collector warnings are normal; latest collector status showed about `797.79 KiB/s`, `0.65%` channel utilization, and `0` warnings
+- server load, memory, bandwidth utilization, and collector warnings are normal; latest collector status showed about `1.12 MiB/s`, `0.94%` channel utilization, and `0` warnings
 - provider gateway RTT can spike without packet loss; treat this as provider jitter evidence, not as a reason to restart the VPN container
 - local Windows clients must still be checked separately; on 2026-06-19 this PC's active `AmneziaVPN` IPv4/IPv6 interfaces and persistent service ImagePath were verified at MTU `1280`
 - latest local recovery check had `Health failures: 0` and one non-critical local download warning at `19.13 Mbps` against the `20 Mbps` warning threshold; a server-side Cloudflare sample reached about `42.7 Mbps`, so this is not evidence of VPS channel saturation
@@ -134,7 +134,7 @@ The current server-side baseline affects all peers automatically once they conne
 
 - live/config `awg0 MTU=1280`
 - generic `awg0` TCP MSS clamp at `1240`
-- server-side `PersistentKeepalive=25` for all 67 peer entries
+- server-side `PersistentKeepalive=25` for all 68 peer entries
 - UDP `443` DNAT available alongside the existing `47895/udp` listener
 - VPS/container resolver moved to Cloudflare DNS
 

@@ -179,7 +179,7 @@ The local `AmneziaVPN` IPv4 and IPv6 interfaces should show MTU `1280`.
 
 After full-access recovery, AmneziaVPN can show two local server cards for the same IP. This does not automatically mean the production VPN was duplicated.
 
-Latest production check on 2026-06-19 showed one running VPN container, `amnezia-awg2`, and `67` configured peers. The duplicate cards were local AmneziaVPN app records for the same server IP, not two production VPN servers.
+Latest production check on 2026-06-19 showed one running VPN container, `amnezia-awg2`, and `68` configured peers. The duplicate cards were local AmneziaVPN app records for the same server IP, not two production VPN servers.
 
 Before deleting anything:
 
