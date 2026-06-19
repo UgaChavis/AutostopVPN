@@ -135,6 +135,14 @@ function Assert-ServerMonitorHealthy {
     Assert-TextContains -Text $text -Pattern "telegram_api_https_ok=true" -Reason "Server Telegram API HTTPS did not pass after retries."
     Assert-TextContains -Text $text -Pattern "openai_api_https_ok=true" -Reason "Server OpenAI API HTTPS did not pass after retries."
     Assert-TextContains -Text $text -Pattern "chatgpt_https_reachable=true" -Reason "Server ChatGPT HTTPS reachability was not confirmed."
+    Assert-TextContains -Text $text -Pattern "keepalive_off=\d+" -Reason "Server peer keepalive summary is missing."
+    $keepaliveMatch = [regex]::Match($text, "peers_total=\d+\s+keepalive_off=(?<count>\d+)\s+keepalive_on=\d+")
+    if ($keepaliveMatch.Success) {
+        $keepaliveOff = [int]$keepaliveMatch.Groups["count"].Value
+        if ($keepaliveOff -gt 0) {
+            Add-HealthWarning "Server monitor reported $keepaliveOff peer(s) without PersistentKeepalive=25."
+        }
+    }
     if ($text -match "jitter_warning=true") {
         Add-HealthWarning "Provider gateway jitter warning is active; no hard failure without packet loss."
     }

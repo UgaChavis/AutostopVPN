@@ -2,7 +2,7 @@
 
 This document is the operator runbook for the VPN monitoring subsystem.
 
-The files in this repository are the local working copy. The production mirror lives in the main `AutostopCRM` repository.
+The files in this repository are the local working copy. The current live monitoring repository checked on the server is `/root/AutostopVPN/repo`; older notes may still mention the main `AutostopCRM` mirror path.
 
 ## Scope
 
@@ -17,24 +17,27 @@ This documents the monitoring layer and the controlled operational helpers aroun
 - Host source path for the image build context: `/opt/amnezia/amnezia-awg2`
 - Live config inside the container: `/opt/amnezia/awg/awg0.conf`
 - Existing telemetry data dir: `/var/lib/amnezia-traffic`
-- Production application repo on server: `/opt/autostopcrm`
+- Current live monitoring repo on server: `/root/AutostopVPN/repo`
+- Older expected CRM mirror path: `/opt/autostopcrm`
 
 ## Current Health Baseline
 
-Last verified from the server on 2026-06-11:
+Last verified from the server on 2026-06-19:
 
 - container `amnezia-awg2` is running
 - UDP `47895` is listening on IPv4 and IPv6
 - UDP `443` is reserved as the alternate mobile endpoint and forwards to the existing `47895/udp` listener without restarting `amnezia-awg2`
-- `57` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
+- `67` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
 - live `awg0` MTU and config MTU are both `1280`
 - generic `awg0` TCP MSS clamp is active at `1240`
 - current-VPS Telegram IPv4 to IPv6 relay is active for provider-blocked Telegram IPv4 endpoints
-- `1.1.1.1` and `8.8.8.8` show `0%` packet loss in the latest checks
+- `1.1.1.1`, `1.0.0.1`, `8.8.8.8`, and Telegram API show `0%` packet loss in the latest checks
 - `api.openai.com` and `chatgpt.com` pass DNS/TCP/TLS/SNI reachability through the VPN; unauthenticated OpenAI API returns HTTP `401`
-- server load, memory, bandwidth utilization, and collector warnings are normal
-- provider gateway RTT can spike above `100 ms` without packet loss; treat this as provider jitter evidence, not as a reason to restart the VPN container
-- local Windows clients must still be checked separately; on 2026-06-11 this PC's active `AmneziaVPN` interface was back at MTU `1376`, then was repaired with elevated `repair_local_amnezia_mtu.ps1` and verified at `1280`
+- server load, memory, bandwidth utilization, and collector warnings are normal; latest collector status showed about `797.79 KiB/s`, `0.65%` channel utilization, and `0` warnings
+- provider gateway RTT can spike without packet loss; treat this as provider jitter evidence, not as a reason to restart the VPN container
+- local Windows clients must still be checked separately; on 2026-06-19 this PC's active `AmneziaVPN` IPv4/IPv6 interfaces and persistent service ImagePath were verified at MTU `1280`
+- latest local recovery check had `Health failures: 0` and one non-critical local download warning at `19.13 Mbps` against the `20 Mbps` warning threshold; a server-side Cloudflare sample reached about `42.7 Mbps`, so this is not evidence of VPS channel saturation
+- no local Windows Task Scheduler jobs matching `Autostop` or `VPN` were registered on this workstation during the 2026-06-19 check; use manual `scheduled_recovery_checks.ps1` until recurring jobs are recreated
 
 ## Why The VPN Container Is Not Updated
 
@@ -131,7 +134,7 @@ The current server-side baseline affects all peers automatically once they conne
 
 - live/config `awg0 MTU=1280`
 - generic `awg0` TCP MSS clamp at `1240`
-- server-side `PersistentKeepalive=25` for all 57 peer entries
+- server-side `PersistentKeepalive=25` for all 67 peer entries
 - UDP `443` DNAT available alongside the existing `47895/udp` listener
 - VPS/container resolver moved to Cloudflare DNS
 

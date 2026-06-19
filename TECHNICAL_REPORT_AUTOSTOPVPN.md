@@ -201,8 +201,8 @@ Backups were written on the server under `/root/autostopvpn-backups/`:
 - `amnezia-awg2-resolv.conf.googledns.bak.20260609-193623`
 
 The scheduled recovery monitor now treats Cloudflare and Telegram packet loss as critical. `8.8.8.8` remains in the log as a non-critical Google route comparison.
-The recurring Task Scheduler job uses the shorter profile `-PingCount 10`, `-SampleSeconds 5`, and `-LocalDownloadBytes 5242880` so that the 15-minute health check finishes quickly. Longer manual incident checks can still use the README command with `-PingCount 30` and a 10 MB download probe.
-The daily deep-check workflow runs at 08:00 Asia/Krasnoyarsk. A Codex thread wake-up named `AutostopVPN daily deep health check` performs the operator review and remediation loop. A local Windows Task Scheduler job named `AutostopVPN Daily Deep Check` runs the heavy probe profile: `-PingCount 60`, `-SampleSeconds 30`, `-DownloadBytes 52428800`, and `-LocalDownloadBytes 52428800`.
+The intended recurring Task Scheduler profile uses `-PingCount 10`, `-SampleSeconds 5`, and `-LocalDownloadBytes 5242880` so that the 15-minute health check finishes quickly. Longer manual incident checks can still use the README command with `-PingCount 30` and a 10 MB download probe. On 2026-06-19, this workstation did not show registered Windows Task Scheduler jobs matching `Autostop` or `VPN`, so recovery checks should be run manually until the tasks are recreated.
+The intended daily deep-check workflow runs at 08:00 Asia/Krasnoyarsk. A Codex thread wake-up named `AutostopVPN daily deep health check` performs the operator review and remediation loop. The matching local Windows Task Scheduler job should run the heavy probe profile: `-PingCount 60`, `-SampleSeconds 30`, `-DownloadBytes 52428800`, and `-LocalDownloadBytes 52428800`.
 
 The latest scheduled run on 2026-06-10 at 03:17 local time completed with `LastTaskResult=0`, `Health warnings: 0`, and `Health failures: 0`. In that run:
 
@@ -237,19 +237,43 @@ The local Windows client was the remaining outlier. On 2026-06-11 the active `Am
 
 Do not remove the Telegram relay or UDP `443` endpoint yet. The public Amnezia incident update says the infrastructure fix found on 2026-06-08 was still being rolled out over several days, and this server's relay counters are still increasing. A valid A/B removal test needs an elevated/local MTU repair first, a fresh passing baseline, a documented rollback, and a low-traffic maintenance window.
 
-## 14. Client Rollout Impact
+## 14. 2026-06-19 Current Update
+
+The server was rechecked read-only on 2026-06-19. The current runtime differs from the older 2026-06-11 inventory:
+
+- `67` peers configured
+- `67` peers with server-side `PersistentKeepalive=25`
+- `28` active peers in the latest 180 second collector sample
+- `33` active peers within 600 seconds in the read-only monitor sample
+- `15` never-handshaked peers in the latest read-only monitor sample
+- live/config `awg0 MTU=1280`
+- generic TCP MSS clamp `1240`
+- UDP `443` forward active
+- Telegram relay active
+- OpenAI and Telegram HTTPS checks pass
+- critical ping samples show `0%` packet loss
+- provider gateway jitter is still visible without packet loss; one short sample reached about `101 ms` max RTT to the provider gateway while internet pings stayed at `0%` loss
+- local Windows `AmneziaVPN` IPv4/IPv6 interfaces and persistent service ImagePath are currently `MTU=1280`
+- local recovery check finished with `Health failures: 0` and one non-critical warning: local VPN download `19.13 Mbps`, below the `20 Mbps` warning threshold and above the `5 Mbps` failure threshold; a server-side Cloudflare sample reached about `42.7 Mbps`, so this is a local/client-route warning rather than a VPS channel failure
+- no Windows Task Scheduler jobs matching `Autostop` or `VPN` were registered on this workstation; run recovery checks manually until recurring jobs are recreated
+- owner/full-access recovery on 2026-06-19 added peer `10.8.1.69/32`; `apply_telegram_keepalive_fix.ps1` then normalized all peers to `PersistentKeepalive=25` and wrote backup `/root/autostopvpn-backups/awg0.conf.keepalive.bak.20260619-173830`
+- a later duplicate-card/local recovery check found a new peer `10.8.1.70/32` without keepalive; the keepalive helper was rerun and wrote backup `/root/autostopvpn-backups/awg0.conf.keepalive.bak.20260619-175622`, after which `keepalive_off=0`
+
+## 15. Client Rollout Impact
 
 The live server state confirms that the server-side changes are already active for all peers that connect:
 
-- total peers: `57`
-- active within 180 seconds in the latest sample: `21`
-- active within 600 seconds in the latest sample: `26`
-- endpoint known: `57`
-- server-side `PersistentKeepalive=25`: `57`
+- total peers: `67`
+- active within 180 seconds in the latest sample: `28`
+- active within 600 seconds in the latest read-only monitor sample: `33`
+- never-handshaked peers in the latest read-only monitor sample: `15`
+- server-side `PersistentKeepalive=25`: `67`
 - server-side `PersistentKeepalive=0`: `0`
 - live/config `awg0 MTU`: `1280`
 - generic TCP MSS clamp rules: `2`
 - UDP `443` forward: active
+
+The 2026-06-19 collector status sample showed channel flow around `797.79 KiB/s`, utilization around `0.65%` of the configured 1 Gbps limit, and collector warnings `0`. A separate 5 second read-only traffic delta saw about `1.37 MiB/s` and `47` peers with traffic movement.
 
 These server-side settings protect the shared VPN path and do not require a new key or server restart. Existing clients on `46.8.254.243:47895` continue to work because `47895/udp` remains published.
 
@@ -274,7 +298,7 @@ Keep existing keys and `AllowedIPs`.
 The secret-bearing service ImagePath backups are intentionally outside the repository under `%LOCALAPPDATA%\AutostopVPN\secret-backups`.
 Recurring short recovery checks are logged under `%LOCALAPPDATA%\AutostopVPN\logs`.
 
-## 14. Official References
+## 16. Official References
 
 - [AmneziaWG docs](https://docs.amnezia.org/ru/documentation/amnezia-wg/)
 - [Amnezia May-June 2026 incident summary](https://amnezia.org/ru/blog/amnezia-vpn-may-june-2026-incident-preliminary-summary)

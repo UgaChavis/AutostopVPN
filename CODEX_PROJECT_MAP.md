@@ -2,7 +2,7 @@
 
 This file is the project orientation sheet for Codex and maintainers.
 
-Last verified from the live server on 2026-06-11.
+Last verified from the live server on 2026-06-19.
 
 ## Canonical Locations
 
@@ -10,8 +10,10 @@ Last verified from the live server on 2026-06-11.
 - Local install target: `%LOCALAPPDATA%\AutostopVPN`
 - Desktop launcher: `%USERPROFILE%\Desktop\Autostop VPN.lnk`
 - GitHub VPN branch: `autostopVPN`
-- Server mirror path: `/opt/autostopcrm`
-- External access documentation root: `%USERPROFILE%\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`
+- Current live VPN mirror path checked on the server: `/root/AutostopVPN/repo`
+- Older expected CRM mirror path: `/opt/autostopcrm`; latest check did not find the collector script there
+- Current external access documentation root: `%USERPROFILE%\Desktop\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM VPN Сервер`
+- Older external access documentation root: `%USERPROFILE%\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`
 
 ## Main Files
 
@@ -33,7 +35,7 @@ Last verified from the live server on 2026-06-11.
 - `audit_autostopvpn.ps1`: read-only maintenance audit for status, size hotspots, stale markers, hard-coded paths, ignored artifacts, and tests
 - current Telegram fallback state is server keepalive on all peers, `awg0` MTU `1280`, generic `awg0` TCP MSS `1240`, stable `47895/udp`, alternate mobile endpoint `443/udp`, and a current-VPS Telegram IPv4 to IPv6 relay for blocked provider routes
 - current provider observation: gateway RTT is stable with `0%` packet loss in the latest read-only sample; occasional RTT spikes above `100 ms` remain a known provider pattern
-- current local Windows state: during the 2026-06-11 audit the active `AmneziaVPN` interface had returned to MTU `1376`; elevated `repair_local_amnezia_mtu.ps1` repaired the active interface and persistent service ImagePath back to `1280`
+- current local Windows state: on 2026-06-19 the active `AmneziaVPN` IPv4/IPv6 interfaces and persistent service ImagePath were verified at MTU `1280`; use `repair_local_amnezia_mtu.ps1` only if a future check reports `1376`
 - the shell app keeps the SSH tunnel hidden, starts server monitoring while the window is open, stops it on close, and uses a single desktop window
 - `start_autostopvpn.ps1`: stable desktop entrypoint
 - `install_autostopvpn.ps1`: local install and desktop shortcut creation
@@ -44,6 +46,23 @@ Last verified from the live server on 2026-06-11.
 - `tests/test_amnezia_traffic_collector.py`: logic tests
 - `tests/test_amnezia_vpn_shell.py`: shell view-model and refresh tests
 - `ACCESS_AND_DOCS.md`: repository navigation and access-key lookup guide
+- `AMNEZIA_FULL_ACCESS_RECOVERY.md`: owner/full-access recovery guide for restoring AmneziaVPN app management without reinstalling the live server
+
+## Current Live Baseline
+
+Verified on 2026-06-19:
+
+- `amnezia-awg2` is running and has been up for about 8 days.
+- UDP `47895` is published and listening.
+- UDP `443` DNAT is active and forwards to the existing `47895/udp` listener.
+- `67` peers are configured; `67` have server-side `PersistentKeepalive=25`.
+- Latest collector status sample: `28` active peers in the 180 second window, channel flow about `797.79 KiB/s`, utilization about `0.65%` of the configured 1 Gbps limit, collector warnings `0`.
+- Live/config `awg0` MTU is `1280`; generic TCP MSS clamp is `1240`.
+- Telegram and OpenAI HTTPS checks pass; critical packet loss is `0%`.
+- Provider gateway jitter can appear without packet loss and should not trigger VPN container restarts by itself.
+- Local Windows `AmneziaVPN` IPv4/IPv6 interface and persistent service ImagePath are currently at MTU `1280`.
+- Latest local recovery check: `Health failures: 0`; one warning for local VPN download `19.13 Mbps` below the `20 Mbps` warning threshold. A server-side Cloudflare sample reached about `42.7 Mbps`, so the warning is local/client-route scoped.
+- No Windows Task Scheduler jobs matching `Autostop` or `VPN` were registered on this workstation during the 2026-06-19 check; run `scheduled_recovery_checks.ps1` manually until recurring jobs are recreated.
 
 ## Runtime Flow
 

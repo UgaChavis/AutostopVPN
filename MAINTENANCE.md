@@ -24,13 +24,14 @@ The audit records:
 - Delete only proven junk: generated caches, ignored runtime output, duplicate docs, or files replaced by a verified equivalent.
 - Do not delete a tracked file just because it looks old; first prove that no launcher, doc, service unit, or deployment step references it.
 - Keep private keys, passwords, access notes, runtime data, and generated logs out of Git.
-- Keep `README.md`, `CODEX_PROJECT_MAP.md`, `LOCAL_INSTALL.md`, `AMNEZIA_VPN_MONITORING.md`, and `ACCESS_AND_DOCS.md` aligned when behavior changes.
+- Keep `README.md`, `CODEX_PROJECT_MAP.md`, `LOCAL_INSTALL.md`, `AMNEZIA_VPN_MONITORING.md`, `ACCESS_AND_DOCS.md`, and `AMNEZIA_FULL_ACCESS_RECOVERY.md` aligned when behavior changes.
 
 ## Documentation Classification
 
 - `README.md`: active entrypoint. Keep concise and link to deeper runbooks instead of duplicating every operational step.
 - `CODEX_PROJECT_MAP.md`: active maintainer map. Keep current file roles, runtime flow, and verification targets here.
 - `AMNEZIA_VPN_MONITORING.md`: active production runbook. Keep live health baseline, Telegram tuning, deployment, and rollback here.
+- `AMNEZIA_FULL_ACCESS_RECOVERY.md`: active owner/full-access recovery guide. Keep local app reinstall, SSH recovery, and safe Amnezia full-access steps here without storing secrets.
 - `LOCAL_INSTALL.md`: active Windows install guide. Keep only desktop install, launch, diagnostics, and uninstall steps here.
 - `ACCESS_AND_DOCS.md`: active pointer to external access notes. Do not copy secrets or full external docs into this repo.
 - `MAINTENANCE.md`: active cleanup checklist. Keep deletion criteria and regression gates here.

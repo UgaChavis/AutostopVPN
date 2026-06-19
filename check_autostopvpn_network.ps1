@@ -282,6 +282,18 @@ function Write-PeerKeepaliveSummary {
     $never = @($peers | Where-Object { $null -eq $_.HandshakeAgeSeconds })
 
     Write-Host "peers_total=$($peers.Count) keepalive_off=$($keepaliveOff.Count) keepalive_on=$($keepaliveOn.Count) target_mobile_keepalive_seconds=$script:TelegramTargetKeepalive"
+    if ($keepaliveOff.Count -gt 0) {
+        Write-Host "keepalive_warning=true reason=peers_without_persistent_keepalive count=$($keepaliveOff.Count)"
+        $keepaliveOff |
+            Sort-Object AllowedIp |
+            Select-Object -First 10 |
+            ForEach-Object {
+                Write-Host "keepalive_off_peer=$($_.AllowedIp) endpoint=$($_.Endpoint) keepalive=$($_.PersistentKeepalive)"
+            }
+    }
+    else {
+        Write-Host "keepalive_warning=false"
+    }
     Write-Host "stale_600s_with_endpoint=$($stale600.Count) stale_3600s_with_endpoint=$($stale3600.Count) never_handshake=$($never.Count)"
 
     $stale600 |

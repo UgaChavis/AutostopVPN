@@ -51,6 +51,17 @@ class _DummyHttpResponse:
 
 
 class AmneziaVpnShellTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._log_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._log_tmp.cleanup)
+        log_dir = Path(self._log_tmp.name)
+        self._debug_log_patch = patch.object(shell, "_DEBUG_LOG_PATH", log_dir / "shell_errors.log")
+        self._ssh_log_patch = patch.object(shell, "_SSH_LOG_PATH", log_dir / "ssh_tunnel.log")
+        self._debug_log_patch.start()
+        self._ssh_log_patch.start()
+        self.addCleanup(self._debug_log_patch.stop)
+        self.addCleanup(self._ssh_log_patch.stop)
+
     def test_fetch_summary_retries_transient_connection_reset(self) -> None:
         response = _DummyHttpResponse(b'{"container": {"status": "running"}}')
         with patch.object(shell, "FETCH_RETRY_DELAYS_SECONDS", (0.0,)):
@@ -261,6 +272,8 @@ class AmneziaVpnShellTests(unittest.TestCase):
         self.assertEqual(kind, "error")
         self.assertIsInstance(payload, RuntimeError)
         self.assertTrue(app._invalidate_tunnel_called)
+        self.assertTrue(shell._DEBUG_LOG_PATH.exists())
+        self.assertIn("refresh_worker error", shell._DEBUG_LOG_PATH.read_text(encoding="utf-8"))
 
     def test_refresh_success_skips_full_rerender_for_same_snapshot(self) -> None:
         app = shell.ShellApp.__new__(shell.ShellApp)

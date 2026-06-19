@@ -6,3 +6,10 @@ data/
 *.pyc
 *.log
 *.tmp
+
+# USB emergency VPN loader private/runtime artifacts.
+**/profiles/usb-emergency-*.conf
+**/logs/*
+!**/logs/.gitkeep
+**/installers/*
+!**/installers/.gitkeep
