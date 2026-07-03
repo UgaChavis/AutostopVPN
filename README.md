@@ -18,19 +18,21 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 
 ## Current Production Baseline
 
-Last verified from the server on 2026-06-19:
+Last verified from the server on 2026-07-03:
 
 - VPN container `amnezia-awg2` is running and listens on UDP `47895`
 - alternate mobile endpoint UDP `443` is forwarded on the host to the existing `47895/udp` listener without restarting the VPN container
 - monitoring services are app-managed and normally inactive until the desktop shell opens
-- peer config has `68` peers, all with server-side `PersistentKeepalive=25`
+- peer config has `70` peers, all with server-side `PersistentKeepalive=25`
 - live `awg0` MTU and config MTU are `1280`
 - generic `awg0` TCP MSS is clamped to `1240`
 - Telegram IPv4 to IPv6 relay is active on the current VPS for provider-blocked Telegram IPv4 endpoints
 - Telegram API and Web HTTPS work through the VPN; the read-only monitor retries Telegram HTTPS because a first attempt can fail transiently
 - OpenAI HTTPS works through the VPN: unauthenticated `api.openai.com/v1/models` returns the expected HTTP `401`, and `chatgpt.com` reaches Cloudflare
-- current channel utilization is well below the 1 Gbps configured limit; the latest collector status showed about `1.12 MiB/s`, `0.94%` utilization, and `0` collector warnings
-- recurring provider-gateway jitter spikes can appear without packet loss; the latest read-only samples had `0%` packet loss, with one short gateway sample reaching about `101 ms`
+- current channel utilization is well below the 1 Gbps configured limit; the latest collector status showed about `309 KiB/s`, `0.25%` utilization, and `0` collector warnings
+- recurring provider-gateway jitter spikes can appear without packet loss; the latest read-only samples had `0%` packet loss and no gateway jitter warning
+- root disk was cleaned from `90%` to about `81%` usage by removing build/cache/journal artifacts without touching Docker volumes or the VPN container
+- `check_autostopvpn_network.ps1` auto-resolves the local `vpn_project_ed25519` server key and reports app-managed inactive dashboard/collector services as expected state
 - local Windows client MTU is currently correct: active IPv4/IPv6 `AmneziaVPN` interfaces and the persistent tunnel service show `MTU=1280`
 - latest local recovery check finished with `Health failures: 0`; it reported one non-critical warning because local VPN download was `19.13 Mbps`, slightly below the `20 Mbps` warning threshold and above the `5 Mbps` failure threshold; a server-side Cloudflare sample reached about `42.7 Mbps`, so the warning is on the local/client route, not the VPS channel
 - no Windows Task Scheduler jobs matching `Autostop` or `VPN` were registered on this workstation during the 2026-06-19 check; run `scheduled_recovery_checks.ps1` manually until recurring jobs are recreated
@@ -296,6 +298,8 @@ The Telegram keepalive helper changes live WireGuard peer keepalive and edits th
 .\apply_telegram_keepalive_fix.ps1
 .\apply_telegram_keepalive_fix.ps1 -RollbackBackupPath /root/autostopvpn-backups/awg0.conf.keepalive.bak.YYYYMMDD-HHMMSS
 ```
+
+When running directly on the VPS, add `-Local` to use local Docker/systemd access without an SSH key.
 
 The Telegram MTU helper changes the live container. Preview it before applying:
 

@@ -23,7 +23,12 @@ function Resolve-ServiceRegistryPath {
 function New-SecretBackupPath {
     param([switch]$CreateDirectory)
 
-    $backupRoot = Join-Path $env:LOCALAPPDATA "AutostopVPN\secret-backups"
+    $localAppData = $env:LOCALAPPDATA
+    if (-not $localAppData) {
+        $homeRoot = if ($HOME) { $HOME } else { (Get-Location).Path }
+        $localAppData = Join-Path $homeRoot ".local/share"
+    }
+    $backupRoot = Join-Path $localAppData "AutostopVPN/secret-backups"
     if ($CreateDirectory) {
         New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
     }
@@ -54,12 +59,16 @@ function Set-ActiveMtu {
 function Show-State {
     param([Parameter(Mandatory = $true)][string]$Alias)
 
-    Get-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4, IPv6 -ErrorAction SilentlyContinue |
-        Select-Object InterfaceAlias, AddressFamily, NlMtu, ConnectionState |
-        Format-Table -AutoSize
+    if (Get-Command Get-NetIPInterface -ErrorAction SilentlyContinue) {
+        Get-NetIPInterface -InterfaceAlias $Alias -AddressFamily IPv4, IPv6 -ErrorAction SilentlyContinue |
+            Select-Object InterfaceAlias, AddressFamily, NlMtu, ConnectionState |
+            Format-Table -AutoSize
+    } else {
+        Write-Host "netipinterface_available=false"
+    }
 
     $servicePath = Resolve-ServiceRegistryPath
-    if (Test-Path -LiteralPath $servicePath) {
+    if ((Get-PSDrive -Name HKLM -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $servicePath)) {
         $image = (Get-ItemProperty -LiteralPath $servicePath -Name ImagePath).ImagePath
         Write-Host ("service_present=true")
         Write-Host ("service_image_has_mtu_1280=" + [bool]($image -match "MTU\s*=\s*1280"))

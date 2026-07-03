@@ -51,7 +51,7 @@ There are currently no tracked Markdown delete candidates in this VPN workspace.
 
 `apply_udp443_forward.ps1` changes host NAT and installs `autostopvpn-udp443-forward.service`. Prefer `-DryRun` or `-WhatIf` first, confirm `47895/udp` remains active, and use `-Rollback` to remove only the UDP `443` forward and service. It must not restart or recreate `amnezia-awg2`.
 
-`apply_telegram_keepalive_fix.ps1` changes live WireGuard peer keepalive and the live container config. Prefer `-DryRun` or `-WhatIf` first, use the shared SSH key resolver, keep the generated `/root/autostopvpn-backups/awg0.conf.keepalive.bak.<timestamp>` path, and avoid running it during provider instability.
+`apply_telegram_keepalive_fix.ps1` changes live WireGuard peer keepalive and the live container config. Prefer `-DryRun` or `-WhatIf` first, use the shared SSH key resolver or `-Local` when running directly on the VPS, keep the generated `/root/autostopvpn-backups/awg0.conf.keepalive.bak.<timestamp>` path, and avoid running it during provider instability.
 
 `apply_telegram_mtu_fix.ps1` changes the live VPN container MTU. Prefer `-DryRun` or `-WhatIf` first, use the shared SSH key resolver, and avoid running it during provider instability unless the MTU fix is the intended action.
 

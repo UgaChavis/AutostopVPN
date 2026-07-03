@@ -168,6 +168,9 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertIn("SshCommandTimeoutSeconds", text)
         self.assertIn("WaitForExit", text)
         self.assertIn("Kill($true)", text)
+        self.assertIn("Write-ServiceState", text)
+        self.assertIn("vpn_project_ed25519", text)
+        self.assertIn("app_managed_inactive_ok", text)
         self.assertNotIn("-i 0.2", text)
         self.assertIn("Telegram IPv4 to IPv6 relay state", text)
         self.assertIn("Alternate UDP endpoint", text)
@@ -543,6 +546,45 @@ class MaintenanceArtifactTests(unittest.TestCase):
         self.assertIn("dry_run=True", output)
         self.assertIn("mode=apply", output)
         self.assertIn("Apply Telegram keepalive 25", output)
+
+    def test_keepalive_helper_local_dry_run_does_not_require_ssh_key(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell") or shutil.which("pwsh")
+        if powershell is None:
+            self.skipTest("PowerShell is not available")
+
+        command = [
+            powershell,
+            "-NoProfile",
+            "-File",
+            str(ROOT / "apply_telegram_keepalive_fix.ps1"),
+            "-DryRun",
+            "-Local",
+            "-Container",
+            "amnezia-awg2",
+            "-Interface",
+            "awg0",
+            "-Keepalive",
+            "25",
+        ]
+        if Path(powershell).name.lower().startswith("powershell"):
+            command[2:2] = ["-ExecutionPolicy", "Bypass"]
+
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        )
+
+        output = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, output)
+        self.assertIn("local=True", output)
+        self.assertIn("key=local", output)
+        self.assertIn("dry_run=True", output)
 
     def test_docs_classify_active_documents_and_avoid_stale_server_note(self) -> None:
         maintenance = (ROOT / "MAINTENANCE.md").read_text(encoding="utf-8")

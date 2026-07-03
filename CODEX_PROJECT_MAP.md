@@ -2,7 +2,7 @@
 
 This file is the project orientation sheet for Codex and maintainers.
 
-Last verified from the live server on 2026-06-19.
+Last verified from the live server on 2026-07-03.
 
 ## Canonical Locations
 
@@ -35,6 +35,7 @@ Last verified from the live server on 2026-06-19.
 - `audit_autostopvpn.ps1`: read-only maintenance audit for status, size hotspots, stale markers, hard-coded paths, ignored artifacts, and tests
 - current Telegram fallback state is server keepalive on all peers, `awg0` MTU `1280`, generic `awg0` TCP MSS `1240`, stable `47895/udp`, alternate mobile endpoint `443/udp`, and a current-VPS Telegram IPv4 to IPv6 relay for blocked provider routes
 - current provider observation: gateway RTT is stable with `0%` packet loss in the latest read-only sample; occasional RTT spikes above `100 ms` remain a known provider pattern
+- current server-side monitor key lookup includes the local `vpn_project_ed25519` and `vpn_project_rsa` names used on this VPS
 - current local Windows state: on 2026-06-19 the active `AmneziaVPN` IPv4/IPv6 interfaces and persistent service ImagePath were verified at MTU `1280`; use `repair_local_amnezia_mtu.ps1` only if a future check reports `1376`
 - the shell app keeps the SSH tunnel hidden, starts server monitoring while the window is open, stops it on close, and uses a single desktop window
 - `start_autostopvpn.ps1`: stable desktop entrypoint
@@ -50,16 +51,17 @@ Last verified from the live server on 2026-06-19.
 
 ## Current Live Baseline
 
-Verified on 2026-06-19:
+Verified on 2026-07-03:
 
-- `amnezia-awg2` is running and has been up for about 8 days.
+- `amnezia-awg2` is running and recovered cleanly after the 2026-07-02 host reboot.
 - UDP `47895` is published and listening.
 - UDP `443` DNAT is active and forwards to the existing `47895/udp` listener.
-- `68` peers are configured; `68` have server-side `PersistentKeepalive=25`.
-- Latest collector status sample: `28` active peers in the 180 second window, channel flow about `1.12 MiB/s`, utilization about `0.94%` of the configured 1 Gbps limit, collector warnings `0`.
+- `70` peers are configured; `70` have server-side `PersistentKeepalive=25`.
+- Latest collector status sample: `27` active peers in the 180 second window, channel flow about `309 KiB/s`, utilization about `0.25%` of the configured 1 Gbps limit, collector warnings `0`.
 - Live/config `awg0` MTU is `1280`; generic TCP MSS clamp is `1240`.
 - Telegram and OpenAI HTTPS checks pass; critical packet loss is `0%`.
 - Provider gateway jitter can appear without packet loss and should not trigger VPN container restarts by itself.
+- Root disk usage was reduced from `90%` to about `81%` by pruning build/cache/journal artifacts without touching Docker volumes or the VPN container.
 - Local Windows `AmneziaVPN` IPv4/IPv6 interface and persistent service ImagePath are currently at MTU `1280`.
 - Latest local recovery check: `Health failures: 0`; one warning for local VPN download `19.13 Mbps` below the `20 Mbps` warning threshold. A server-side Cloudflare sample reached about `42.7 Mbps`, so the warning is local/client-route scoped.
 - No Windows Task Scheduler jobs matching `Autostop` or `VPN` were registered on this workstation during the 2026-06-19 check; run `scheduled_recovery_checks.ps1` manually until recurring jobs are recreated.

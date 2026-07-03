@@ -47,6 +47,9 @@ function Resolve-SshKey {
     }
 
     foreach ($name in @(
+        "vpn_project_ed25519",
+        "vpn_project_rsa",
+        "autostop_vps27560_ed25519",
         "autostopvpn_server_ed25519",
         "autostopcrm_server_ed25519",
         "codex_autostopvpn",
@@ -167,6 +170,33 @@ function Write-CommandResult {
     if ($text) {
         Write-Host $text
     }
+}
+
+function Write-ServiceState {
+    $remoteScript = @'
+set -uo pipefail
+for unit in \
+  autostopvpn-udp443-forward.service \
+  autostopvpn-telegram-relay.service \
+  amnezia-dashboard.service \
+  amnezia-traffic-collector.timer \
+  amnezia-traffic-collector.service
+do
+  active="$(systemctl is-active "$unit" 2>/dev/null || true)"
+  enabled="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+  expected="active"
+  ok=false
+  if [ "$unit" = "amnezia-dashboard.service" ] || [ "$unit" = "amnezia-traffic-collector.timer" ] || [ "$unit" = "amnezia-traffic-collector.service" ]; then
+    expected="app_managed_inactive_ok"
+    if [ "$active" = "active" ] || [ "$active" = "inactive" ]; then ok=true; fi
+  elif [ "$active" = "active" ]; then
+    ok=true
+  fi
+  echo "unit=$unit active=${active:-unknown} enabled=${enabled:-unknown} expected=$expected ok=$ok"
+done
+'@
+
+    Write-CommandResult -Title "Service state" -Result (Invoke-ReadOnlyRemoteScript -Script $remoteScript -AllowFailure)
 }
 
 function Get-RemoteEpoch {
@@ -662,7 +692,7 @@ Write-Host "target=${SshUser}@${HostName}:$SshPort container=$Container interfac
 Write-Host "no_restart=true no_peer_changes=true no_mtu_changes=true no_iptables_changes=true alternate_udp_port=$AlternateUdpPort target_udp_port=$VpnUdpPort"
 
 Write-CommandResult -Title "Server clock" -Result (Invoke-ReadOnlySsh -RemoteCommand "date -Is" -AllowFailure)
-Write-CommandResult -Title "Service state" -Result (Invoke-ReadOnlySsh -RemoteCommand "systemctl is-active amnezia-dashboard.service amnezia-traffic-collector.timer amnezia-traffic-collector.service" -AllowFailure)
+Write-ServiceState
 Write-CommandResult -Title "VPN listener" -Result (Invoke-ReadOnlySsh -RemoteCommand "docker ps --filter name=$Container --format '{{.Names}} {{.Status}} {{.Ports}}'; ss -lunp | grep $VpnUdpPort || true" -AllowFailure)
 Write-AlternateUdpEndpoint
 $routeResult = Invoke-ReadOnlySsh -RemoteCommand "ip route get 1.1.1.1" -AllowFailure

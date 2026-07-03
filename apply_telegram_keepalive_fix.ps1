@@ -8,6 +8,7 @@ param(
     [string]$Interface = "awg0",
     [int]$Keepalive = 25,
     [string]$RollbackBackupPath = "",
+    [switch]$Local,
     [switch]$DryRun
 )
 
@@ -94,15 +95,15 @@ if (-not $SshUser) { $SshUser = [string]$serverInfo.ssh_user }
 if ($SshPort -le 0) { $SshPort = [int]$serverInfo.ssh_port }
 if (-not $Container) { $Container = [string]$serverInfo.vpn_container }
 
-if (-not $HostName) { throw "HostName is required." }
+if (-not $Local -and -not $HostName) { throw "HostName is required." }
 if (-not $SshUser) { $SshUser = "root" }
 if ($SshPort -le 0) { $SshPort = 22 }
 if (-not $Container) { $Container = "amnezia-awg2" }
 if (-not $Interface) { $Interface = "awg0" }
 if ($Keepalive -lt 0 -or $Keepalive -gt 65535) { throw "Keepalive must be between 0 and 65535 seconds." }
 
-$sshKey = Resolve-SshKey -ExplicitKeyPath $KeyPath
-$sshDestination = "${SshUser}@${HostName}"
+$sshKey = if ($Local) { "local" } else { Resolve-SshKey -ExplicitKeyPath $KeyPath }
+$sshDestination = if ($Local) { "local-server" } else { "${SshUser}@${HostName}" }
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $mode = if ($RollbackBackupPath) { "rollback" } else { "apply" }
 
@@ -304,21 +305,24 @@ $remoteScript = $remoteScript.
 $remoteCommand = ConvertTo-RemoteCommand -Script $remoteScript
 
 Write-Warning "This helper changes live WireGuard peer keepalive and the live container config. Avoid running it during provider instability."
-Write-Host "target=${sshDestination}:$SshPort container=$Container interface=$Interface keepalive=$Keepalive mode=$mode key=$sshKey dry_run=$($DryRun.IsPresent) what_if=$($WhatIfPreference)"
+Write-Host "target=${sshDestination}:$SshPort container=$Container interface=$Interface keepalive=$Keepalive mode=$mode key=$sshKey local=$($Local.IsPresent) dry_run=$($DryRun.IsPresent) what_if=$($WhatIfPreference)"
 if ($RollbackBackupPath) {
     Write-Host "rollback_backup_path=$RollbackBackupPath"
 }
 
-$sshBaseArgs = @(
-    "-i", $sshKey,
-    "-p", "$SshPort",
-    "-o", "BatchMode=yes",
-    "-o", "ConnectTimeout=15",
-    "-o", "StrictHostKeyChecking=accept-new",
-    $sshDestination
-)
-
 $label = if ($RollbackBackupPath) { "Restore keepalive backup" } else { "Apply Telegram keepalive $Keepalive" }
-Invoke-GuardedNativeCommand -Label $label -FilePath "ssh" -Arguments ($sshBaseArgs + @($remoteCommand)) -Target "${sshDestination}:$SshPort"
+if ($Local) {
+    Invoke-GuardedNativeCommand -Label $label -FilePath "bash" -Arguments @("-lc", $remoteCommand) -Target $sshDestination
+} else {
+    $sshBaseArgs = @(
+        "-i", $sshKey,
+        "-p", "$SshPort",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=15",
+        "-o", "StrictHostKeyChecking=accept-new",
+        $sshDestination
+    )
+    Invoke-GuardedNativeCommand -Label $label -FilePath "ssh" -Arguments ($sshBaseArgs + @($remoteCommand)) -Target "${sshDestination}:$SshPort"
+}
 
 Write-Host "Telegram keepalive helper completed."
