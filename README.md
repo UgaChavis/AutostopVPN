@@ -1,8 +1,11 @@
 # Autostop VPN
 
-Autostop VPN is the isolated local working copy for the VPN monitoring subsystem.
+Autostop VPN is the canonical working copy for the VPN monitoring subsystem.
 
-The production copy of the same files is mirrored into the main `AutostopCRM` repository. This repo is the place to make VPN-only changes without mixing them with CRM work.
+The current live monitoring checkout is `/root/AutostopVPN/repo`. Selected
+collector/dashboard files are installed under `/usr/local/bin` and systemd;
+the active CRM checkout does not contain a second VPN mirror. The VPN data
+plane remains the separate `amnezia-awg2` container and its live configuration.
 
 For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). For access notes and external documentation, read [ACCESS_AND_DOCS.md](ACCESS_AND_DOCS.md).
 
@@ -336,10 +339,13 @@ Use this repository for local VPN-only edits:
 
 1. change the collector, launcher, services, or docs in this repo
 2. run the unit tests here
-3. copy the same files into the mirrored location in `AutostopCRM`
-4. keep the operational docs in sync between both copies
+3. deploy only the selected collector/dashboard files and unit files to their
+   documented server targets
+4. compare the installed files with this checkout and run the read-only health
+   checks
 
-This keeps VPN work isolated locally while still shipping the final files through the main CRM repository.
+This keeps VPN work isolated from CRM and makes the live deployment path
+explicit.
 
 ## Local Install
 
@@ -359,7 +365,9 @@ Use the shortcut or run:
 
 ## Server Deployment
 
-This repo is the local working copy. The production deployment still uses the same files on the server-side CRM environment.
+This repo is the canonical monitoring source. Production installs selected
+files directly under `/usr/local/bin` and `/etc/systemd/system`; it does not
+load them from the CRM checkout.
 
 Typical deployment targets:
 

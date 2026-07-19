@@ -44,7 +44,7 @@ There are currently no tracked Markdown delete candidates in this VPN workspace.
 2. Make one small change package at a time: docs, script safety, collector internals, shell internals, performance, or tests.
 3. Preserve these public contracts: `collect/report/status/doctor`, dashboard JSON shape, `%LOCALAPPDATA%\AutostopVPN`, desktop shortcut flow, systemd unit names, and `127.0.0.1:18080/dashboard.json`.
 4. Keep refresh-loop work light: geo and MTU probes must stay cached, and the shell should keep the repeated-snapshot fast path.
-5. After local verification, sync to the GitHub `autostopVPN` branch first; server mirror updates under `/opt/autostopcrm` are a separate confirmed rollout step.
+5. After local verification, sync to the GitHub `autostopVPN` branch first; installation to `/usr/local/bin` and systemd is a separate confirmed rollout step. Do not copy VPN files into `/opt/autostopcrm`.
 6. Keep `%LOCALAPPDATA%\AutostopVPN\logs` and `%LOCALAPPDATA%\AutostopVPN\secret-backups` across local reinstall; the installer preserves these directories because they contain recovery evidence and local registry rollback files.
 
 ## High-Risk Helpers

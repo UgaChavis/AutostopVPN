@@ -116,11 +116,11 @@ Verified on 2026-07-03:
 - `python .\amnezia_traffic_collector.py doctor`
 - `python .\amnezia_traffic_collector.py status`
 - confirm GitHub branch `autostopVPN` matches local files
-- confirm the same VPN files are present on the server mirror
+- confirm the installed `/usr/local/bin` scripts and systemd units match this checkout after line-ending normalization
 
 ## Maintenance Rules
 
-- Keep the maintenance pass staged: local verification, GitHub branch sync, then a separately confirmed server mirror sync.
+- Keep the maintenance pass staged: local verification, GitHub branch sync, then a separately confirmed install to `/usr/local/bin` and systemd.
 - Delete only proven junk: ignored caches, generated runtime output, duplicate docs, or files replaced by a verified equivalent.
 - Treat `apply_telegram_keepalive_fix.ps1` as a high-risk helper because it changes live WireGuard peer keepalive and the live container config; run `-DryRun` or `-WhatIf` first and keep the backup path for rollback.
 - Treat `apply_udp443_forward.ps1` as a high-risk helper because it changes host NAT and installs a systemd oneshot service; run `-DryRun` or `-WhatIf` first and use `-Rollback` to remove only the UDP `443` forward.
@@ -131,4 +131,4 @@ Verified on 2026-07-03:
 
 ## Safe Change Rule
 
-Prefer small edits in the collector, run tests immediately, then sync the same VPN files to GitHub and the server mirror. Avoid changing CRM-only files unless the user explicitly asks for mirrored deployment work.
+Prefer small edits in the collector, run tests immediately, then sync the VPN source to GitHub and install only the documented runtime files. Avoid changing CRM files during VPN-only work.
