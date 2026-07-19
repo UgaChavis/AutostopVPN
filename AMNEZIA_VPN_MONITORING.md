@@ -22,12 +22,12 @@ This documents the monitoring layer and the controlled operational helpers aroun
 
 ## Current Health Baseline
 
-Last verified from the server on 2026-07-03:
+Last verified from the server on 2026-07-19:
 
 - container `amnezia-awg2` is running
 - UDP `47895` is listening on IPv4 and IPv6
 - UDP `443` is reserved as the alternate mobile endpoint and forwards to the existing `47895/udp` listener without restarting `amnezia-awg2`
-- `70` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
+- `73` peers are configured; server-side `PersistentKeepalive=25` is active for all peers
 - live `awg0` MTU and config MTU are both `1280`
 - generic `awg0` TCP MSS clamp is active at `1240`
 - current-VPS Telegram IPv4 to IPv6 relay is active for provider-blocked Telegram IPv4 endpoints
@@ -136,7 +136,7 @@ The current server-side baseline affects all peers automatically once they conne
 
 - live/config `awg0 MTU=1280`
 - generic `awg0` TCP MSS clamp at `1240`
-- server-side `PersistentKeepalive=25` for all 70 peer entries
+- server-side `PersistentKeepalive=25` for all 73 peer entries
 - UDP `443` DNAT available alongside the existing `47895/udp` listener
 - VPS/container resolver moved to Cloudflare DNS
 

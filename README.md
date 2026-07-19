@@ -18,12 +18,12 @@ For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). F
 
 ## Current Production Baseline
 
-Last verified from the server on 2026-07-03:
+Last verified from the server on 2026-07-19:
 
 - VPN container `amnezia-awg2` is running and listens on UDP `47895`
 - alternate mobile endpoint UDP `443` is forwarded on the host to the existing `47895/udp` listener without restarting the VPN container
 - monitoring services are app-managed and normally inactive until the desktop shell opens
-- peer config has `70` peers, all with server-side `PersistentKeepalive=25`
+- peer config has `73` peers, all with server-side `PersistentKeepalive=25`
 - live `awg0` MTU and config MTU are `1280`
 - generic `awg0` TCP MSS is clamped to `1240`
 - Telegram IPv4 to IPv6 relay is active on the current VPS for provider-blocked Telegram IPv4 endpoints
