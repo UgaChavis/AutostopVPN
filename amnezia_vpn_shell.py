@@ -36,7 +36,7 @@ for candidate in (SCRIPT_DIR, SCRIPT_DIR / "scripts"):
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
 
-import amnezia_traffic_collector as collector
+import amnezia_traffic_collector as collector  # noqa: E402
 
 
 DEFAULT_REFRESH_SECONDS = 1.0
@@ -1565,7 +1565,6 @@ class ShellApp:
         height = max(int(canvas.winfo_height() or 0), 1)
         inner_pad = 8
         plot_width = max(width - inner_pad * 2, 1)
-        plot_height = max(height - inner_pad * 2, 1)
         self._trend_phase = (self._trend_phase + 6) % max(plot_width, 1)
 
         grid_color = "#1a2a34"
@@ -1791,9 +1790,7 @@ class ShellApp:
         total_peers = _coerce_int(model.get("total_peers"))
         offline_connections = _coerce_int(model.get("offline_connections"))
         peer_rows = list(self._all_peer_rows)
-        visible_count = len(self._filtered_peer_rows)
         top_peer = peer_rows[0] if peer_rows else {}
-        updated_label = str(model.get("updated_label", "—"))
         updated_clock = str(model.get("updated_clock", "—"))
         updated_day = str(model.get("updated_day", ""))
         age_label = str(model.get("age_label", "н/д"))
@@ -1802,7 +1799,6 @@ class ShellApp:
         server_packet_loss = str(model.get("server_packet_loss", "н/д"))
         server_packet_loss_value = _coerce_float(model.get("server_packet_loss_value"))
         server_load = str(model.get("server_load", "н/д"))
-        server_memory = str(model.get("server_memory", "н/д"))
         server_uptime = str(model.get("server_uptime", "н/д"))
         daily_average = str(model.get("daily_average", "н/д"))
         daily_peak = str(model.get("daily_peak", "н/д"))

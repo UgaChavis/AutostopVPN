@@ -16,7 +16,7 @@ for candidate in (SCRIPT_DIR, SCRIPT_DIR / "scripts"):
     if candidate_str not in sys.path:
         sys.path.insert(0, candidate_str)
 
-import amnezia_traffic_collector as collector
+import amnezia_traffic_collector as collector  # noqa: E402
 
 
 HOST = "127.0.0.1"

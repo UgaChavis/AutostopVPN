@@ -2355,7 +2355,7 @@ def doctor() -> int:
             print(f"  {runtime_server_info_error}")
             failure_count += 1
     else:
-        print(f"[WARN] runtime server info")
+        print("[WARN] runtime server info")
         print(f"  {SERVER_INFO_FILE} is missing; copy the template to the runtime data directory during deployment.")
 
     summary_exists = SUMMARY_FILE.exists()

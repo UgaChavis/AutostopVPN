@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import amnezia_vpn_shell as shell
+import amnezia_vpn_shell as shell  # noqa: E402
 
 
 class _DummyRoot:

@@ -18,7 +18,7 @@ for path in (str(SCRIPTS), str(ROOT)):
     if path not in sys_module.path:
         sys_module.path.insert(0, path)
 
-import amnezia_traffic_collector as collector
+import amnezia_traffic_collector as collector  # noqa: E402
 
 
 class AmneziaTrafficCollectorTests(unittest.TestCase):
