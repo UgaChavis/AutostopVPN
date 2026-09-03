@@ -6,6 +6,7 @@ data/
 *.pyc
 *.log
 *.tmp
+.codex-remote-attachments/
 
 # USB emergency VPN loader private/runtime artifacts.
 **/profiles/usb-emergency-*.conf
