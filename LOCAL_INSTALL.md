@@ -58,6 +58,9 @@ If it reports `AmneziaVPN` MTU `1376`, open PowerShell as Administrator and repa
 ## Notes
 
 - The desktop shortcut launches `start_autostopvpn.ps1`.
+- The default monitoring SSH target is MNG 1 Manager at `46.8.254.189`.
+- Use `open_amnezia_dashboard.ps1 -HostName <host>` or the Python shell's
+  `--host <host>` option to select a different monitoring server explicitly.
 - The native shell now defaults to a 1 second refresh interval and an operations cockpit visual theme.
 - The install script also generates `AutostopVPN.ico` inside the installed copy and assigns it to the shortcut.
 - The launcher then opens the native shell window directly and keeps the SSH tunnel hidden.

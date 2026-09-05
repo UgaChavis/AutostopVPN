@@ -1,5 +1,5 @@
 param(
-    [string]$HostName = "46.8.254.243",
+    [string]$HostName = "46.8.254.189",
     [string]$SshUser = "root",
     [string]$KeyPath = "",
     [int]$LocalPort = 18765,

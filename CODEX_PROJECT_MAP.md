@@ -11,6 +11,7 @@ Last verified from the live server on 2026-07-03.
 - Desktop launcher: `%USERPROFILE%\Desktop\Autostop VPN.lnk`
 - GitHub VPN branch: `autostopVPN`
 - Current live VPN mirror path checked on the server: `/root/AutostopVPN/repo`
+- Monitoring SSH target verified on 2026-09-05: MNG 1 Manager, `46.8.254.189`
 - Older expected CRM mirror path: `/opt/autostopcrm`; latest check did not find the collector script there
 - Current external access documentation root: `%USERPROFILE%\Desktop\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM VPN Сервер`
 - Older external access documentation root: `%USERPROFILE%\Мой диск\КЛЮЧЕВАЯ ДОКУМЕНТАЦИЯ CRM`

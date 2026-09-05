@@ -7,6 +7,12 @@ collector/dashboard files are installed under `/usr/local/bin` and systemd;
 the active CRM checkout does not contain a second VPN mirror. The VPN data
 plane remains the separate `amnezia-awg2` container and its live configuration.
 
+Verified monitoring target on 2026-09-05: MNG 1 Manager at `46.8.254.189`.
+Both desktop launchers and the server metadata use this address. The installed
+collector/dashboard were verified through SSH and localhost HTTP; their units
+remain app-managed. Historical VPN client endpoint examples below have not
+been revalidated as current client profiles.
+
 For a fast orientation map, read [CODEX_PROJECT_MAP.md](CODEX_PROJECT_MAP.md). For access notes and external documentation, read [ACCESS_AND_DOCS.md](ACCESS_AND_DOCS.md).
 
 ## Documentation Map
